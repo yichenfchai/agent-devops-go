@@ -1,0 +1,1221 @@
+openapi: 3.1.0
+
+info:
+  title: GoPulse CI API
+  version: 0.1.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  summary: 面向小型团队的轻量 CI/CD 工具 —— 后端 HTTP API
+  description: |
+    本规范**由前端实际调用反推生成**，事实来源是
+    `web/src/api/index.ts`（领域 API）、`web/src/api/client.ts`（fetch 封装）
+    与 `web/src/types.ts`（DTO 类型）。后端实现应以本文为契约，
+    前端 `types.ts` 与本文的 `components/schemas` 必须保持一致。
+
+    ## 约定
+
+    - 所有路径以 `/api` 为前缀（`client.ts` 里的 `BASE`）。
+    - 除 webhook 与登录外，全部端点需要 `Authorization: Bearer <jwt>`。
+    - 请求/响应体统一 `application/json`；实时日志端点返回 `text/event-stream`。
+    - 时间字段当前是**人类可读文案**（如 `3 分钟前`），不是 ISO 8601 ——
+      见下方「已知契约缺陷」第 4 条。
+
+    ## x-frontend 标记
+
+    每个 operation 带 `x-frontend` 字段，说明前端当前的接线状态：
+
+    | 值 | 含义 |
+    |----|------|
+    | `called` | 前端已在调用，后端必须按此契约实现 |
+    | `ui-only` | 界面上有对应按钮/表单，但 `api/` 层尚未接线，后端需先实现 |
+    | `backend-only` | 前端不调用（webhook、登录），属系统对外接口 |
+
+    ## 已知契约缺陷（实现前需决策）
+
+    1. **`/builds/{buildNumber}` 的 number 全局不唯一。**
+       数据库约束是 `UNIQUE(project_id, number)`，同一 number 在不同项目下会重复。
+       当前能跑通只因 mock 数据里 `id === number`。
+       建议改为 `/builds/{buildId}`（全局唯一主键），或
+       `/projects/{projectId}/builds/{number}`。本文暂按前端现状写 `{buildNumber}`，
+       并在参数描述里标注风险。
+    2. **字段命名不一致。** `Project.created_at` 是 snake_case，
+       其余全部 camelCase。建议统一为 camelCase（`createdAt`），
+       改前端 `types.ts` 一行即可。本文如实记录现状。
+    3. **secrets 作用域不一致。** 数据库是项目级（`secrets.project_id`），
+       前端调的是全局 `/secrets`。建议改为 `/projects/{projectId}/secrets`。
+    4. **时间语义模糊。** `finishedAt: "3 分钟前"`、`queuedAt: "52 秒前"`
+       把「展示文案」当成了数据。建议后端返回 ISO 8601 时间戳，
+       相对时间由前端计算（否则无法排序、无法本地化、缓存后会过期）。
+    5. **部署详情路径风格不统一。** `GET /deployments/{buildNumber}`
+       与其它构建子资源（`/builds/{n}/stages`）风格不一致，
+       建议统一为 `/builds/{buildNumber}/deployment`。
+    6. **错误响应体未定义。** `client.ts` 只读 HTTP 状态码与 statusText，
+       不解析 body。本文给出建议结构（`Error`），后端可自由实现。
+
+servers:
+  - url: http://127.0.0.1:8080/api
+    description: 本地开发（vite 已把 /api 代理到此地址）
+  - url: https://{host}/api
+    description: 单机 VPS 部署（替换为你的域名或公网 IP）
+    variables:
+      host:
+        default: ci.internal
+        description: 部署 devopsd 的主机域名或 IP
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: projects
+    description: 项目 CRUD 与手动触发构建
+  - name: builds
+    description: 构建记录、阶段、日志、统计
+  - name: diagnosis
+    description: LLM 智能诊断
+  - name: deployments
+    description: 部署详情与回滚
+  - name: hosts
+    description: 部署目标主机（SSH）
+  - name: secrets
+    description: 项目环境变量与密钥
+  - name: runner
+    description: 构建机状态
+  - name: webhooks
+    description: 代码平台回调（HMAC 验签，无需登录）
+  - name: auth
+    description: 登录与会话
+
+paths:
+  /projects:
+    get:
+      tags: [projects]
+      operationId: listProjects
+      x-frontend: called
+      summary: 项目列表
+      description: |
+        返回列表，每项内嵌 `lastBuild` 摘要与 `deployed` 标记。
+        前端项目列表页据此渲染状态徽章、上次构建信息与「配置部署」入口。
+      responses:
+        '200':
+          description: 项目数组（可能为空 —— 前端会渲染引导式空状态）
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Project' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [projects]
+      operationId: createProject
+      x-frontend: called
+      summary: 创建项目
+      description: |
+        新建向导第三步提交。后端应据此：
+        1. 为该仓库生成 webhook secret 并加密入库；
+        2. 探测仓库根目录文件，推断 `detectedType`（如检测到 `package.json` → Node.js）；
+        3. 返回完整 Project（含服务端生成的 id / webhook 信息）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectRequest' }
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: 仓库已接入（`repo_provider + repo_full_name` 唯一约束冲突）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /projects/{projectId}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [projects]
+      operationId: getProject
+      x-frontend: called
+      summary: 项目详情
+      responses:
+        '200':
+          description: 项目对象
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [projects]
+      operationId: updateProject
+      x-frontend: ui-only
+      summary: 修改项目配置
+      description: |
+        设置页「保存所有设置」按钮需要此端点，但 `api/` 层尚未接线。
+        可修改：项目名、默认分支、部署目标、构建超时、产物路径、
+        日志保留行数、Pipeline 覆盖（YAML）、通知开关。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectRequest' }
+      responses:
+        '200':
+          description: 更新后的项目
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [projects]
+      operationId: deleteProject
+      x-frontend: ui-only
+      summary: 删除项目
+      description: |
+        设置页「删除项目」按钮需要此端点，`api/` 层尚未接线。
+        语义：级联删除构建历史、部署记录、密钥；
+        **不卸载目标机上已部署的应用**（界面已如此承诺）。
+      responses:
+        '204': { description: 已删除 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /projects/{projectId}/builds:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [builds]
+      operationId: listProjectBuilds
+      x-frontend: called
+      summary: 某项目的构建历史
+      description: |
+        构建历史表格页数据源。当前前端一次性取全量并在客户端分页；
+        数据量增长后应加 `limit` / `cursor` 参数（见 TODO）。
+      parameters:
+        - name: state
+          in: query
+          required: false
+          description: 按状态过滤（前端「按状态过滤」下拉框，目前在前端侧过滤）
+          schema: { $ref: '#/components/schemas/BuildState' }
+        - name: ref
+          in: query
+          required: false
+          description: 按分支过滤
+          schema: { type: string, example: main }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: cursor
+          in: query
+          required: false
+          description: 游标分页（上一页最后一条的 id）
+          schema: { type: integer }
+      responses:
+        '200':
+          description: 构建数组，按 id 倒序
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Build' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [builds]
+      operationId: triggerBuild
+      x-frontend: called
+      summary: 手动触发构建
+      description: |
+        顶栏「运行流水线」与项目卡「运行流水线」按钮调用。
+        后端应：写入一条 `state=queued` 的 builds 记录并立即返回，
+        **不要等构建完成**（构建可能持续数分钟）。
+        队列满时返回 503，前端会提示稍后重试。
+      responses:
+        '202':
+          description: 已入队
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TriggerBuildResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: 队列已满（背压）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /builds:
+    get:
+      tags: [builds]
+      operationId: listAllBuilds
+      x-frontend: called
+      summary: 全部构建（跨项目）
+      description: |
+        `api.listBuilds()` 不带 projectId 时走此端点。
+        当前 UI 没有跨项目视图，但 API 层已预留 —— 后端应实现。
+      responses:
+        '200':
+          description: 构建数组
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Build' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /builds/stats:
+    get:
+      tags: [builds]
+      operationId: getBuildStats
+      x-frontend: called
+      summary: 构建统计
+      description: 构建历史页顶部四张统计卡的数据源。
+      responses:
+        '200':
+          description: 统计对象
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BuildStats' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /builds/{buildNumber}:
+    parameters:
+      - $ref: '#/components/parameters/BuildNumber'
+    get:
+      tags: [builds]
+      operationId: getBuild
+      x-frontend: called
+      summary: 构建详情
+      description: |
+        运行中页、失败页、AI 诊断页共用。返回体包含内嵌的
+        `diagnosis`（可为 null —— 尚未诊断或诊断失败）。
+      responses:
+        '200':
+          description: 构建对象
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Build' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /builds/{buildNumber}/stages:
+    parameters:
+      - $ref: '#/components/parameters/BuildNumber'
+    get:
+      tags: [builds]
+      operationId: getBuildStages
+      x-frontend: called
+      summary: 构建阶段列表
+      description: |
+        运行中页每 3 秒轮询此端点刷新阶段状态。
+        阶段集合由检测到的项目类型决定（Node.js 为 6 阶段）。
+      responses:
+        '200':
+          description: 阶段数组（按 index 升序）
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Stage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /builds/{buildNumber}/logs:
+    parameters:
+      - $ref: '#/components/parameters/BuildNumber'
+    get:
+      tags: [builds]
+      operationId: getBuildLogs
+      x-frontend: called
+      summary: 构建日志（历史，一次性）
+      description: |
+        失败页与 AI 诊断页使用。返回**尾部**日志（服务端截断至 8KB 脱敏后
+        的同源数据，或全量分块 —— 由 `log_chunks` 表按 seq 拼接）。
+        行级 `level` 由后端解析 ANSI/关键字打标，前端据此着色。
+      parameters:
+        - name: tail
+          in: query
+          required: false
+          description: 只取尾部 N 行
+          schema: { type: integer, minimum: 1, default: 500 }
+      responses:
+        '200':
+          description: 日志行数组（按 seq 升序）
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/LogLine' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /builds/{buildNumber}/logs/stream:
+    parameters:
+      - $ref: '#/components/parameters/BuildNumber'
+    get:
+      tags: [builds]
+      operationId: streamBuildLogs
+      x-frontend: called
+      summary: 构建日志实时流（SSE）
+      description: |
+        运行中页通过 `EventSource` 订阅。协议为 Server-Sent Events：
+
+        ```
+        event: message
+        data: {"seq":41,"ts":"10:24:32","text":"...","level":"error"}
+
+        ```
+
+        实现要点（与后端 Log Pipe 设计对应）：
+        - 新订阅者先补发 ring buffer 中的最近 N 行，再进入实时推送；
+        - 慢消费者**丢弃**而非阻塞（前端也有 2000 行环形缓冲兜底）；
+        - 构建进入终态后发送 `event: done` 并关闭流；
+        - 浏览器断线会自动重连，服务端按 `Last-Event-ID`（= seq）补发。
+      responses:
+        '200':
+          description: SSE 流
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: 每帧 data 为一个 LogLine JSON
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /builds/{buildNumber}/diagnosis:
+    parameters:
+      - $ref: '#/components/parameters/BuildNumber'
+    get:
+      tags: [diagnosis]
+      operationId: getDiagnosis
+      x-frontend: called
+      summary: LLM 智能诊断结果
+      description: |
+        AI 诊断页右侧紫卡数据源。诊断在构建失败后**异步**生成：
+        - 尚未完成：返回 404（前端显示「智能诊断未完成」降级卡）；
+        - 已完成：返回诊断对象；
+        - 诊断失败不影响构建本身的状态。
+        「重新分析」按钮 = 前端重新 GET（后端可支持 POST 强制重跑，见下）。
+      responses:
+        '200':
+          description: 诊断对象
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Diagnosis' }
+        '404':
+          description: 尚未生成或诊断失败
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [diagnosis]
+      operationId: rerunDiagnosis
+      x-frontend: ui-only
+      summary: 强制重新诊断
+      description: |
+        「重新分析」按钮当前实现为重新 GET；若后端支持缓存命中，
+        应提供此 POST 端点绕过缓存强制重跑。`api/` 层尚未接线。
+      responses:
+        '202':
+          description: 已重新排队
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Diagnosis' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /builds/{buildNumber}/rollback:
+    parameters:
+      - $ref: '#/components/parameters/BuildNumber'
+    post:
+      tags: [deployments]
+      operationId: rollbackToBuild
+      x-frontend: called
+      summary: 回滚到该构建对应的版本
+      description: |
+        回滚确认弹窗「确认回滚」按钮。后端应：
+        1. 解析该构建的 image_tag（必须是曾部署成功的版本）；
+        2. 新建一条 deployments 记录，`previous_deployment_id` 指向当前版本；
+        3. SSH 重新部署 + 健康检查；
+        4. 原构建状态置 `rolled_back`。
+        同步执行（前端等待 ~400ms 的 mock 延迟即此语义）；
+        若耗时可能超过 10s，应改为 202 + 轮询 deployments。
+      responses:
+        '200':
+          description: 回滚完成
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Deployment' }
+        '400':
+          description: 该构建没有可回滚的已部署版本
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /deployments/{buildNumber}:
+    parameters:
+      - $ref: '#/components/parameters/BuildNumber'
+    get:
+      tags: [deployments]
+      operationId: getDeployment
+      x-frontend: called
+      summary: 某次构建的部署详情
+      description: |
+        部署详情页数据源：部署步骤时间线 + 主机信息 + 版本历史。
+        ⚠️ 路径风格与 `/builds/{n}/...` 不一致（见 info 缺陷 #5），
+        建议后端实现时统一为 `/builds/{buildNumber}/deployment`，
+        前端同步改一行。
+      responses:
+        '200':
+          description: 部署对象
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Deployment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: 该构建尚未部署或部署记录不存在
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /hosts:
+    get:
+      tags: [hosts]
+      operationId: listHosts
+      x-frontend: called
+      summary: 部署目标主机列表
+      description: |
+        部署目标管理页与新建向导第二步的数据源。
+        `status` 为最近一次连通性校验的结果（非实时探测）。
+      responses:
+        '200':
+          description: 主机数组
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DeployHost' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [hosts]
+      operationId: createHost
+      x-frontend: ui-only
+      summary: 添加部署主机
+      description: |
+        「添加主机」抽屉的提交端点，`api/` 层尚未接线。
+        后端必须：私钥 AES-GCM 加密后入库；保存前用公钥指纹做一次
+        SSH 握手验证（校验 docker / docker-compose 已安装）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateHostRequest' }
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeployHost' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /hosts/{hostId}/test:
+    parameters:
+      - name: hostId
+        in: path
+        required: true
+        schema: { type: integer }
+    post:
+      tags: [hosts]
+      operationId: testHost
+      x-frontend: called
+      summary: 测试主机连通性
+      description: |
+        「测试连接」按钮。后端执行：SSH 握手（校验 host key）→
+        `docker --version` → `docker-compose --version`。
+        耗时可达数秒，前端已做 loading 态。
+      responses:
+        '200':
+          description: 测试结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TestHostResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /secrets:
+    get:
+      tags: [secrets]
+      operationId: listSecrets
+      x-frontend: called
+      summary: 密钥列表
+      description: |
+        ⚠️ 当前为全局路径，与数据库的项目级作用域不一致（info 缺陷 #3）。
+        后端实现时应改为 `/projects/{projectId}/secrets`，前端同步调整。
+        **响应永不含明文值** —— `value` 字段不存在，只有元信息。
+      responses:
+        '200':
+          description: 密钥元信息数组
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Secret' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [secrets]
+      operationId: addSecret
+      x-frontend: called
+      summary: 添加密钥
+      description: |
+        值经 AES-GCM 加密后入库；主密钥来自环境变量，不落库。
+        同 key 重复提交应为 upsert 语义（更新 value 与 updatedAt）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddSecretRequest' }
+      responses:
+        '201':
+          description: 已创建（响应不含值）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Secret' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /secrets/{secretId}:
+    parameters:
+      - name: secretId
+        in: path
+        required: true
+        schema: { type: integer }
+    delete:
+      tags: [secrets]
+      operationId: deleteSecret
+      x-frontend: ui-only
+      summary: 删除密钥
+      description: 密钥表格行内删除按钮需要此端点，`api/` 层尚未接线。
+      responses:
+        '204': { description: 已删除 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /runner:
+    get:
+      tags: [runner]
+      operationId: getRunner
+      x-frontend: called
+      summary: 构建机状态
+      description: |
+        项目列表页底部「构建机状态」面板。单机部署下只有一台构建机。
+        `queued` 为当前队列深度 —— 前端据此显示「排队中: N」。
+      responses:
+        '200':
+          description: 构建机信息
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunnerInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      x-frontend: backend-only
+      security: []
+      summary: 登录
+      description: |
+        登录页当前是**模拟登录**（400ms 延迟后直接跳转，未调用后端）。
+        接入真实鉴权时：校验 bcrypt 口令哈希 → 签发 JWT。
+        `remember` 为 true 时令牌有效期 30 天，否则会话级。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+                remember: { type: boolean, default: false }
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token]
+                properties:
+                  token: { type: string, description: JWT }
+                  expiresAt: { type: string, format: date-time }
+        '401':
+          description: 邮箱或密码错误（不区分哪种，防枚举）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /webhooks/{provider}:
+    post:
+      tags: [webhooks]
+      operationId: receiveWebhook
+      x-frontend: backend-only
+      security: []
+      summary: 代码平台 Webhook 回调
+      description: |
+        GitHub / GitLab 推送事件入口。**核心契约：**
+        1. 用项目各自的 webhook secret 做 HMAC-SHA256 验签
+           （GitHub 头 `X-Hub-Signature-256: sha256=<hex>`；
+           GitLab 头 `X-Gitlab-Token`）；
+        2. 请求体限长 1MB，超限直接 413；
+        3. 解析出 repo / ref / commit 后**立即入队并返回 202** ——
+           绝不同步执行构建（平台超时 10s，同步必然触发重试风暴）；
+        4. 同一 `repo + commit_sha + ref` 短时间重复事件幂等去重；
+        5. 队列满返回 503，平台会按其策略重试。
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [github, gitlab]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: 平台原生事件体（push / pull_request / tag_push），结构不做约束
+      responses:
+        '202':
+          description: 已验签并入队
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  buildNumber: { type: [integer, 'null'] }
+                  deduplicated: { type: boolean, description: 命中幂等去重时为 true }
+        '401':
+          description: 验签失败
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: 仓库未接入任何项目
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413':
+          description: 请求体超过 1MB
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: 队列已满（背压，平台应重试）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 除 /webhooks/* 与 /auth/login 外全部端点必需
+
+  parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      description: 项目主键（全局唯一）
+      schema: { type: integer, minimum: 1 }
+    BuildNumber:
+      name: buildNumber
+      in: path
+      required: true
+      description: |
+        构建序号（项目内自增，UI 显示 #1091）。
+        ⚠️ 全局不唯一（info 缺陷 #1）：数据库约束是 UNIQUE(project_id, number)。
+        实现时建议改用全局唯一的 build id，或把项目维度放进路径。
+      schema: { type: integer, minimum: 1 }
+
+  responses:
+    BadRequest:
+      description: 请求体校验失败
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: 未登录或令牌过期
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      description: |
+        建议的错误响应结构。当前前端 client.ts 不解析 body（只读状态码），
+        后端可自由实现，但建议统一为此结构以便将来展示。
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: 人类可读错误信息
+          example: 构建 #99999 不存在
+        code:
+          type: string
+          description: 机器可读错误码
+          example: build_not_found
+
+    BuildState:
+      type: string
+      description: |
+        构建状态机。合法迁移：
+        queued→running→succeeded→deploying→deployed；
+        running→failed；deploying→deploy_failed→rolled_back；deployed→rolled_back。
+        diagnosed 不是 state 枚举成员，是 builds.diagnosis_state 的异步标记位。
+      enum: [queued, running, succeeded, deploying, deployed, failed, deploy_failed, rolled_back]
+
+    Trigger:
+      type: string
+      description: 构建触发来源
+      enum: [push, pr, manual, rollback]
+
+    LastBuildSummary:
+      type: object
+      required: [number, state, finishedAt, durationMs]
+      properties:
+        number: { type: integer, example: 1091 }
+        state: { $ref: '#/components/schemas/BuildState' }
+        finishedAt:
+          type: string
+          description: ⚠️ 当前为人类可读文案（info 缺陷 #4），建议改 ISO 8601
+          example: 3 分钟前
+        durationMs: { type: integer, example: 28140 }
+
+    Project:
+      type: object
+      description: 对应前端 src/types.ts 的 Project 接口
+      required:
+        - id
+        - name
+        - repoProvider
+        - repoFullName
+        - defaultBranch
+        - deployed
+        - created_at
+      properties:
+        id: { type: integer, example: 1 }
+        name: { type: string, example: web-api }
+        repoProvider:
+          type: string
+          enum: [github, gitlab]
+        repoFullName:
+          type: string
+          description: owner/repo，与 repoProvider 联合唯一
+          example: acme/web-api
+        defaultBranch: { type: string, example: main }
+        detectedType:
+          type: [string, 'null']
+          description: 自动检测的项目类型；未检测为 null
+          example: Node.js
+        deployHostId:
+          type: [integer, 'null']
+          description: 关联部署目标；null 表示未配置（前端显示警示徽章）
+        lastBuild:
+          oneOf:
+            - $ref: '#/components/schemas/LastBuildSummary'
+            - type: 'null'
+        deployed:
+          type: boolean
+          description: 是否成功部署过（false 时前端显示「未部署」）
+        created_at:
+          type: string
+          description: ⚠️ 唯一 snake_case 字段（info 缺陷 #2），建议改 createdAt
+          example: '2026-06-02'
+
+    CreateProjectRequest:
+      type: object
+      description: 新建向导第三步提交的字段（对应 api.createProject 入参）
+      required: [repoFullName, branch, hostId, workDir]
+      properties:
+        repoFullName:
+          type: string
+          example: acme/web-api
+        branch: { type: string, example: main }
+        hostId:
+          type: integer
+          description: 部署目标主机 id（必须是 status=ok 的主机）
+        workDir: { type: string, example: /srv/web-api }
+        healthCheckUrl:
+          type: string
+          example: http://10.0.0.8:8080/healthz
+        autoRollback:
+          type: boolean
+          default: true
+          description: 失败时自动回滚（向导第二步开关）
+        buildTimeoutMin:
+          type: integer
+          default: 30
+          description: 构建超时（分钟，向导高级设置）
+        keepVersions:
+          type: integer
+          default: 5
+          description: 保留历史版本数（向导高级设置）
+
+    UpdateProjectRequest:
+      type: object
+      description: 设置页可修改字段（x-frontend ui-only，接口形状为建议值）
+      properties:
+        name: { type: string }
+        defaultBranch: { type: string }
+        deployHostId: { type: [integer, 'null'] }
+        buildTimeoutMin: { type: integer, minimum: 1 }
+        artifactPath: { type: string, example: dist/ }
+        logKeepLines: { type: integer, minimum: 100, example: 5000 }
+        pipelineYaml:
+          type: [string, 'null']
+          description: 手动模式下的 Pipeline 覆盖；null 表示用自动检测结果
+        notifyOnFail: { type: boolean }
+        notifyOnDeploy: { type: boolean }
+        notifyOnRollback: { type: boolean }
+        notifyChannel:
+          type: string
+          enum: [webhook, email]
+        notifyWebhookUrl: { type: string }
+
+    Build:
+      type: object
+      description: 对应前端 src/types.ts 的 Build 接口
+      required:
+        - id
+        - projectId
+        - number
+        - state
+        - trigger
+        - ref
+        - commitSha
+        - commitMessage
+        - commitAuthor
+        - queuedAt
+      properties:
+        id: { type: integer, example: 1091 }
+        projectId: { type: integer, example: 1 }
+        number:
+          type: integer
+          description: 项目内自增序号（UI 显示 #1091）
+          example: 1091
+        state: { $ref: '#/components/schemas/BuildState' }
+        trigger: { $ref: '#/components/schemas/Trigger' }
+        ref: { type: string, example: main }
+        commitSha:
+          type: string
+          description: 短 SHA（7 位），与前端展示一致
+          example: a3f9c21
+        commitMessage: { type: string, example: 修复部署脚本的环境变量读取 }
+        commitAuthor: { type: string, example: M. Alvarez }
+        baseImage:
+          type: [string, 'null']
+          description: 构建容器基础镜像（检测结果的快照）
+          example: node:20-alpine
+        imageTag:
+          type: [string, 'null']
+          description: 产物镜像 tag；构建未成功为 null
+          example: web-api:a3f9c21
+        exitCode:
+          type: [integer, 'null']
+          description: 构建容器退出码；进行中为 null
+        queuedAt:
+          type: string
+          description: ⚠️ 人类可读文案（info 缺陷 #4）
+          example: 10 分钟前
+        startedAt: { type: [string, 'null'] }
+        finishedAt: { type: [string, 'null'] }
+        durationMs:
+          type: [integer, 'null']
+          description: 总耗时毫秒；#1091 全站统一为 28140
+          example: 28140
+        diagnosis:
+          oneOf:
+            - $ref: '#/components/schemas/Diagnosis'
+            - type: 'null'
+
+    TriggerBuildResponse:
+      type: object
+      required: [number]
+      properties:
+        number:
+          type: integer
+          description: 新构建的序号，前端据此跳转 /builds/{number}
+          example: 1093
+
+    Diagnosis:
+      type: object
+      description: |
+        LLM 诊断结果。对应前端紫卡展示；**无置信度字段** ——
+        百分比置信度无法解释来源，已在设计阶段移除。
+      required: [rootCause, suggestion, model, latencyMs, inputTokens, redactions]
+      properties:
+        rootCause:
+          type: string
+          example: TypeScript 类型错误。src/api/client.ts 第 42 行把 string 类型的值传给了期望 number 的参数。
+        suggestion:
+          type: string
+          example: 读取环境变量后显式转换：const port = Number(process.env.PORT ?? 3000)。
+        model:
+          type: string
+          description: 实际使用的模型名（OpenAI 兼容端点可配）
+          example: gpt-4o-mini
+        latencyMs: { type: integer, example: 3800 }
+        inputTokens: { type: integer, example: 2100 }
+        redactions:
+          type: integer
+          description: 送审前脱敏替换的 secret 处数
+          example: 3
+
+    Stage:
+      type: object
+      description: 流水线阶段。构建与部署共用此结构（部署步骤也是 Stage[]）
+      required: [index, name, command, status]
+      properties:
+        index: { type: integer, minimum: 1, example: 3 }
+        name: { type: string, example: 执行构建 }
+        command:
+          type: string
+          description: 该阶段实际执行的命令（Pipeline 快照的一部分）
+          example: tsc -b
+        status:
+          type: string
+          enum: [pending, running, passed, failed, skipped]
+        durationMs:
+          type: [integer, 'null']
+          description: 阶段耗时；pending/skipped 为 null
+
+    LogLine:
+      type: object
+      description: 一行构建日志。SSE 帧的 data 与 GET /logs 的数组元素同构
+      required: [seq, ts, text, level]
+      properties:
+        seq:
+          type: integer
+          description: 全局行号（SSE 断线重连的 Last-Event-ID）
+          example: 41
+        ts:
+          type: string
+          description: ⚠️ HH:MM:SS 本地时间文案；建议改 epoch 毫秒（缺陷 #4 同源）
+          example: '10:24:32'
+        text:
+          type: string
+          description: 已去除 ANSI 控制符的纯文本（前端自行按 level 着色）
+          example: "src/api/client.ts:42:18 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'."
+        level:
+          type: string
+          enum: [info, ok, warn, error]
+
+    DeployHost:
+      type: object
+      description: |
+        部署目标主机。**永不含私钥与指纹明文** —— ssh_key_enc 只存库不回传。
+      required:
+        - id
+        - name
+        - addr
+        - sshUser
+        - workDir
+        - composeFile
+        - healthRetries
+        - keepVersions
+        - status
+        - statusDetail
+        - usedBy
+      properties:
+        id: { type: integer, example: 1 }
+        name: { type: string, example: prod-vps-01 }
+        addr:
+          type: string
+          description: host:port
+          example: 10.0.0.8:22
+        sshUser: { type: string, example: deploy }
+        workDir: { type: string, example: /srv/web-api }
+        composeFile: { type: string, example: docker-compose.yml }
+        healthCheckUrl: { type: [string, 'null'] }
+        healthRetries: { type: integer, example: 5 }
+        keepVersions: { type: integer, example: 5 }
+        status:
+          type: string
+          enum: [ok, unreachable]
+          description: 最近一次连通性校验结果
+        statusDetail:
+          type: string
+          description: SSH banner 或失败原因原文
+          example: SSH-2.0-OpenSSH_8.9p1
+        usedBy:
+          type: array
+          description: 使用该主机的项目名列表
+          items: { type: string }
+          example: [web-api, admin-dashboard, payment-service]
+
+    CreateHostRequest:
+      type: object
+      description: 添加主机抽屉的表单字段（x-frontend ui-only，形状为建议值）
+      required: [name, addr, sshUser, privateKey, workDir]
+      properties:
+        name: { type: string, example: prod-vps-02 }
+        addr: { type: string, example: 10.0.0.20:22 }
+        sshUser: { type: string, example: deploy }
+        privateKey:
+          type: string
+          format: password
+          description: OpenSSH 私钥原文；服务端 AES-GCM 加密后存储，永不再回显
+        hostKeyFingerprint:
+          type: string
+          description: 目标机公钥指纹（ssh-keyscan 获取），防中间人
+          example: SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s
+        workDir: { type: string, example: /srv/my-app }
+        composeFile: { type: string, default: docker-compose.yml }
+        healthCheckUrl: { type: string }
+        healthRetries: { type: integer, default: 5 }
+        keepVersions: { type: integer, default: 5 }
+
+    TestHostResponse:
+      type: object
+      required: [ok, detail]
+      properties:
+        ok: { type: boolean }
+        detail:
+          type: string
+          description: 成功为 SSH banner，失败为原始错误
+          example: SSH-2.0-OpenSSH_8.9p1
+
+    Deployment:
+      type: object
+      description: 对应前端 src/types.ts 的 Deployment 接口
+      required:
+        - id
+        - buildId
+        - projectName
+        - imageTag
+        - hostAddr
+        - workDir
+        - state
+        - steps
+        - startedAt
+        - durationMs
+        - versions
+      properties:
+        id: { type: integer, example: 1 }
+        buildId: { type: integer, example: 1090 }
+        projectName: { type: string, example: web-api }
+        imageTag: { type: string, example: web-api:a3f9c21 }
+        hostAddr:
+          type: string
+          description: user@host（不含端口与私钥）
+          example: deploy@10.0.0.8
+        workDir: { type: string, example: /srv/web-api }
+        state:
+          type: string
+          enum: [deploying, deployed, failed, rolled_back]
+        steps:
+          type: array
+          description: 部署步骤时间线（连接→推镜像→compose→启动→健康检查）
+          items: { $ref: '#/components/schemas/Stage' }
+        startedAt: { type: string, example: '10:25:04' }
+        durationMs: { type: integer, example: 19500 }
+        versions:
+          type: array
+          description: 目标机保留的最近 K 个版本（回滚候选）
+          items: { $ref: '#/components/schemas/DeployedVersion' }
+
+    DeployedVersion:
+      type: object
+      required: [tag, deployedAt, state]
+      properties:
+        tag: { type: string, example: web-api:7b1e044 }
+        deployedAt: { type: string, example: 2 小时前 }
+        state:
+          type: string
+          description: 该版本的部署结果文案
+          example: 成功
+
+    Secret:
+      type: object
+      description: 密钥元信息。**任何响应都不含 value** —— 明文只在写入时出现一次
+      required: [id, key, updatedAt, isSecret]
+      properties:
+        id: { type: integer, example: 1 }
+        key: { type: string, example: DATABASE_URL }
+        updatedAt: { type: string, example: 3 天前 }
+        isSecret:
+          type: boolean
+          description: |
+            true = 加密存储、界面掩码显示；
+            false = 非敏感明文（如 NODE_ENV），界面直接显示值。
+            ⚠️ isSecret=false 时前端显示 'production' 是 mock 硬编码，
+            后端需要额外的 displayValue 字段才能支撑（当前类型未定义，
+            实现时需补充并同步 types.ts）。
+
+    AddSecretRequest:
+      type: object
+      required: [key, value]
+      properties:
+        key:
+          type: string
+          pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+          description: 环境变量名；禁止换行（前端已有警示文案）
+          example: DATABASE_URL
+        value:
+          type: string
+          format: password
+          description: 明文值，仅此一次出现在请求中；服务端 AES-GCM 加密后入库
+
+    BuildStats:
+      type: object
+      description: 构建历史页顶部统计卡
+      required: [total, successRate, avgDurationMs, monthlyDeploys]
+      properties:
+        total: { type: integer, example: 128 }
+        successRate:
+          type: number
+          description: 百分比数值（92.2 表示 92.2%）
+          example: 92.2
+        avgDurationMs: { type: integer, example: 41000 }
+        monthlyDeploys: { type: integer, example: 37 }
+
+    RunnerInfo:
+      type: object
+      description: 单机部署下唯一的构建机
+      required: [name, os, version, state, queued]
+      properties:
+        name:
+          type: string
+          description: 全站唯一命名 build-runner-01（回归测试钉死）
+          example: build-runner-01
+        os: { type: string, example: Ubuntu 22.04 LTS }
+        version: { type: string, example: v1.4.2 }
+        state:
+          type: string
+          enum: [idle, busy]
+        queued:
+          type: integer
+          description: 当前队列深度
+          example: 0

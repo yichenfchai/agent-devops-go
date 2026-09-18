@@ -1,0 +1,49 @@
+# ── 依赖与构建产物（可再生，不入库）──
+node_modules/
+web/dist/
+web/coverage/
+*.tsbuildinfo
+.vite/
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ── 环境变量与密钥（绝不入库）──
+.env
+.env.local
+.env.*.local
+!.env.example
+*.pem
+*.key
+id_rsa*
+
+# ── 后端运行时产物 ──
+data/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+devopsd
+devopsd.exe
+*.exe
+*.test
+*.out
+
+# ── 操作系统 ──
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── 编辑器 ──
+.vscode/
+.idea/
+*.swp
+*~
+
+# ── 日志与临时 ──
+*.log
+tmp/
+.tmp/

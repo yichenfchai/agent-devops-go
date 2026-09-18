@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>智能项目部署与运维工具 · 系统设计可视化</title>
+<style>
+  :root{
+    --bg:#080d17; --panel:#0f1728; --panel2:#141f35; --panel3:#1a2743;
+    --line:#243352; --line2:#2f4066;
+    --fg:#e8eefb; --muted:#8ba0c4; --dim:#5f7396;
+    --blue:#4d8dfb; --green:#34d399; --amber:#fbbf24; --red:#f87171; --purple:#a78bfa;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--fg);
+    font-family:"Microsoft YaHei","PingFang SC","Hiragino Sans GB","Source Han Sans SC",system-ui,-apple-system,sans-serif;
+    font-size:14px; line-height:1.6; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1400px;margin:0 auto;padding:28px 26px 60px}
+
+  header{border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:22px}
+  h1{margin:0 0 4px;font-size:22px;letter-spacing:-.2px}
+  .sub{color:var(--muted);font-size:13px;margin:0}
+  .sub b{color:var(--blue);font-weight:600}
+
+  nav{display:flex;gap:6px;margin-top:18px;flex-wrap:wrap}
+  .tab-btn{
+    background:transparent;border:1px solid var(--line);color:var(--muted);
+    padding:7px 15px;border-radius:7px;cursor:pointer;font-size:13px;font-family:inherit;
+    transition:.15s;
+  }
+  .tab-btn:hover{border-color:var(--line2);color:var(--fg)}
+  .tab-btn.on{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:600}
+
+  .tab{display:none}
+  .tab.on{display:block;animation:fade .22s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  .grid{display:grid;grid-template-columns:1fr 400px;gap:22px;align-items:start}
+  @media(max-width:1100px){.grid{grid-template-columns:1fr}}
+
+  .layer{border:1px solid var(--line);border-radius:12px;padding:12px 14px 14px;margin-bottom:14px;background:var(--panel)}
+  .layer h3{margin:0 0 10px;font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);font-weight:700}
+  .layer.acc{border-color:#1e3a80;background:linear-gradient(180deg,#0e1a33,#0f1728)}
+  .layer.core{border-color:#14503c;background:linear-gradient(180deg,#0c1f1b,#0f1728)}
+  .layer.stor{border-color:#5a4410;background:linear-gradient(180deg,#1d1708,#0f1728)}
+  .layer.ext{border-color:#5c2020;background:linear-gradient(180deg,#1e1010,#0f1728)}
+  .layer h3.acc{color:#6ba4ff}.layer h3.core{color:#48d9a8}.layer h3.stor{color:#e5b84a}.layer h3.ext{color:#f08a8a}
+
+  .row{display:grid;gap:10px}
+  .r3{grid-template-columns:repeat(3,1fr)}
+  .r2{grid-template-columns:repeat(2,1fr)}
+  .r4{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:760px){.r3,.r4{grid-template-columns:1fr 1fr}}
+
+  .comp{
+    background:var(--panel2);border:1px solid var(--line2);border-radius:9px;
+    padding:11px 12px;cursor:pointer;transition:.15s;position:relative;
+  }
+  .comp:hover{background:var(--panel3);border-color:var(--blue);transform:translateY(-1px)}
+  .comp.on{border-color:var(--blue);background:var(--panel3);box-shadow:0 0 0 1px var(--blue),0 6px 22px -10px var(--blue)}
+  .comp .n{font-weight:600;font-size:13.5px;display:flex;align-items:center;gap:7px}
+  .comp .d{color:var(--muted);font-size:11.5px;margin-top:3px;line-height:1.5}
+  .dot{width:7px;height:7px;border-radius:50%;flex:none}
+  .d-b{background:var(--blue)}.d-g{background:var(--green)}.d-a{background:var(--amber)}
+  .d-r{background:var(--red)}.d-p{background:var(--purple)}.d-s{background:var(--dim)}
+
+  .detail{
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:18px;position:sticky;top:18px;
+  }
+  .detail .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:20px;
+    background:var(--panel3);color:var(--muted);border:1px solid var(--line2);margin-bottom:9px}
+  .detail h2{margin:0 0 8px;font-size:17px}
+  .detail p.desc{color:var(--muted);font-size:13px;margin:0 0 14px;line-height:1.65}
+  .detail h4{margin:14px 0 7px;font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+  .detail ul{margin:0;padding-left:0;list-style:none}
+  .detail li{font-size:12.5px;color:#c3d2ea;padding-left:15px;position:relative;margin-bottom:5px;line-height:1.55}
+  .detail li::before{content:"";position:absolute;left:0;top:8px;width:5px;height:5px;border-radius:50%;background:var(--blue)}
+  pre{
+    background:#060a12;border:1px solid var(--line);border-radius:8px;padding:11px 12px;
+    overflow-x:auto;font-family:var(--mono);font-size:11.5px;line-height:1.55;color:#a9c4e8;margin:0;
+  }
+  .empty{color:var(--dim);font-size:13px;text-align:center;padding:50px 10px;line-height:1.9}
+
+  /* ── 流水线 ── */
+  .btn{
+    background:var(--blue);border:none;color:#fff;padding:8px 18px;border-radius:8px;
+    cursor:pointer;font-size:13px;font-weight:600;font-family:inherit;transition:.15s;
+  }
+  .btn:hover{filter:brightness(1.12)}
+  .btn:disabled{opacity:.4;cursor:not-allowed;filter:none}
+  .btn.ghost{background:transparent;border:1px solid var(--line2);color:var(--muted)}
+  .btn.ghost:hover{border-color:var(--blue);color:var(--fg);filter:none}
+  .ctl{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+  .chk{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--muted);cursor:pointer;user-select:none}
+  .chk input{accent-color:var(--red);width:15px;height:15px}
+
+  .stages{display:flex;flex-direction:column;gap:7px;margin-bottom:16px}
+  .stage{
+    display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:9px;
+    background:var(--panel);border:1px solid var(--line);transition:.25s;
+  }
+  .stage .idx{width:20px;height:20px;border-radius:50%;background:var(--panel3);color:var(--dim);
+    font-size:11px;display:grid;place-items:center;flex:none;font-weight:700;transition:.25s}
+  .stage .lbl{font-size:13px;font-weight:600;min-width:74px}
+  .stage .msg{font-size:11.5px;color:var(--dim);font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .stage.active{border-color:var(--blue);background:var(--panel3)}
+  .stage.active .idx{background:var(--blue);color:#fff}
+  .stage.active .msg{color:var(--muted)}
+  .stage.ok{border-color:#1c5c46}
+  .stage.ok .idx{background:var(--green);color:#04241a}
+  .stage.ok .msg{color:var(--muted)}
+  .stage.err{border-color:#6b2727;background:#1c1113}
+  .stage.err .idx{background:var(--red);color:#2b0707}
+
+  .term{
+    background:#05080f;border:1px solid var(--line);border-radius:10px;padding:12px 13px;
+    font-family:var(--mono);font-size:11.5px;line-height:1.75;height:430px;overflow-y:auto;
+    color:#9fb8da;
+  }
+  .term::-webkit-scrollbar{width:9px}
+  .term::-webkit-scrollbar-thumb{background:#22304d;border-radius:5px}
+  .ln{white-space:pre-wrap;word-break:break-word}
+  .ln .t{color:#4a5f82}
+  .ln.ok{color:var(--green)}.ln.err{color:var(--red)}.ln.warn{color:var(--amber)}.ln.inf{color:#7fb0f5}
+  .ln b{color:var(--purple);font-weight:600}
+  .cursor{display:inline-block;width:7px;height:13px;background:var(--green);vertical-align:-2px;animation:bl 1s step-end infinite}
+  @keyframes bl{50%{opacity:0}}
+
+  .diag{
+    margin-top:14px;border:1px solid #3d2f6b;border-radius:11px;padding:15px 16px;
+    background:linear-gradient(180deg,#151029,#101426);display:none;
+  }
+  .diag.on{display:block;animation:fade .3s}
+  .diag h3{margin:0 0 10px;font-size:13.5px;color:var(--purple);display:flex;align-items:center;gap:8px}
+  .diag .row2{font-size:12.5px;margin-bottom:7px;line-height:1.6}
+  .diag .row2 span{color:var(--dim);display:inline-block;min-width:58px}
+  .diag .meta{margin-top:11px;padding-top:10px;border-top:1px solid #2a2350;font-size:11.5px;color:var(--dim)}
+
+  /* ── 状态机 ── */
+  .fsm-layout{display:grid;grid-template-columns:1fr 340px;gap:22px;align-items:start}
+  @media(max-width:1000px){.fsm-layout{grid-template-columns:1fr}}
+  svg.states{width:100%;height:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+  .node{cursor:pointer}
+  .node rect{transition:.15s}
+  .node:hover rect{filter:brightness(1.35)}
+  .node.sel rect{stroke-width:3.5}
+
+  /* ── 并发 ── */
+  .slots{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin-bottom:16px}
+  @media(max-width:760px){.slots{grid-template-columns:repeat(2,1fr)}}
+  .slot{
+    border:1px solid var(--line);border-radius:10px;background:var(--panel);
+    padding:12px;min-height:92px;display:flex;flex-direction:column;justify-content:center;
+    transition:.25s;text-align:center;
+  }
+  .slot .sn{font-size:10.5px;color:var(--dim);letter-spacing:.07em;margin-bottom:6px;text-transform:uppercase}
+  .slot .job{font-family:var(--mono);font-size:12.5px;color:var(--dim)}
+  .slot.busy{border-color:var(--blue);background:var(--panel3)}
+  .slot.busy .job{color:var(--fg);font-weight:600}
+  .slot .bar{height:3px;background:var(--panel3);border-radius:2px;margin-top:9px;overflow:hidden}
+  .slot .bar i{display:block;height:100%;background:var(--blue);width:0;transition:width .1s linear}
+
+  .qbox{display:flex;gap:7px;flex-wrap:wrap;min-height:34px;padding:8px 10px;border:1px dashed var(--line2);border-radius:9px;margin-bottom:14px;align-items:center}
+  .chip{
+    font-family:var(--mono);font-size:11px;padding:3px 9px;border-radius:6px;
+    background:var(--panel3);border:1px solid var(--line2);color:var(--muted);transition:.2s;
+  }
+  .chip.run{background:#132a4a;border-color:var(--blue);color:#bcd6ff}
+  .chip.done{background:#0e2b22;border-color:#1c5c46;color:#7ee0b8;opacity:.55}
+
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin-top:16px}
+  @media(max-width:760px){.metrics{grid-template-columns:repeat(2,1fr)}}
+  .metric{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px}
+  .metric .k{font-size:10.5px;color:var(--dim);letter-spacing:.07em;text-transform:uppercase}
+  .metric .v{font-size:21px;font-weight:700;font-family:var(--mono);margin-top:3px}
+
+  .tree{display:flex;flex-direction:column;gap:0}
+  .tnode{display:flex;align-items:center;gap:9px;padding:7px 0;font-size:12.5px}
+  .tnode .bullet{width:9px;height:9px;border-radius:3px;flex:none}
+  .tnode .nm{font-family:var(--mono);font-weight:600}
+  .tnode .cnt{color:var(--dim);font-size:11px;font-family:var(--mono)}
+  .tnode .note{color:var(--muted);font-size:11.5px}
+  .indent1{padding-left:22px}.indent2{padding-left:46px}
+  .vline{width:1px;background:var(--line2);margin-left:4px}
+
+  /* ── 里程碑 ── */
+  .road{position:relative;padding-left:34px}
+  .road::before{content:"";position:absolute;left:9px;top:8px;bottom:8px;width:2px;background:linear-gradient(180deg,var(--blue),var(--purple),var(--amber))}
+  .ms{position:relative;margin-bottom:16px;background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px 16px}
+  .ms::before{content:"";position:absolute;left:-30px;top:19px;width:12px;height:12px;border-radius:50%;
+    background:var(--bg);border:2.5px solid var(--blue)}
+  .ms.done::before{background:var(--green);border-color:var(--green)}
+  .ms h3{margin:0 0 4px;font-size:14.5px}
+  .ms .wk{font-size:11px;color:var(--dim);font-family:var(--mono);letter-spacing:.05em}
+  .ms .del{font-size:12.5px;color:var(--muted);margin:8px 0 0;line-height:1.6}
+  .ms .acc{font-size:12px;color:#b9e6d3;background:#0d2119;border-left:3px solid var(--green);
+    padding:7px 11px;border-radius:0 7px 7px 0;margin-top:9px}
+  .pill{display:inline-block;font-size:10.5px;padding:1px 8px;border-radius:20px;
+    background:var(--panel3);color:var(--muted);border:1px solid var(--line2);margin-left:7px;vertical-align:1px}
+  .pill.mvp{background:#2a1f0c;border-color:#5a4410;color:var(--amber)}
+  .pill.core{background:#0d2a3a;border-color:#1e4a63;color:#7fd4f0}
+  .pill.ai{background:#241a45;border-color:#3d2f6b;color:var(--purple)}
+
+  footer{margin-top:44px;padding-top:18px;border-top:1px solid var(--line);color:var(--dim);font-size:12px}
+  code.inl{font-family:var(--mono);font-size:11.5px;background:var(--panel3);padding:1px 6px;border-radius:5px;color:#a9c4e8}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>面向小型团队的智能项目部署与运维工具</h1>
+  <p class="sub">毕业设计 · 系统设计可视化 &nbsp;|&nbsp; <b>Go</b> 高并发调度 &nbsp;·&nbsp; <b>Docker</b> 构建隔离 &nbsp;·&nbsp; <b>LLM</b> 智能诊断</p>
+  <nav>
+    <button class="tab-btn on" data-tab="arch">① 架构总览</button>
+    <button class="tab-btn" data-tab="pipe">② 流水线演示</button>
+    <button class="tab-btn" data-tab="fsm">③ 状态机</button>
+    <button class="tab-btn" data-tab="conc">④ 并发模型</button>
+    <button class="tab-btn" data-tab="road">⑤ 里程碑</button>
+  </nav>
+</header>
+
+<!-- ═══════════ ① 架构 ═══════════ -->
+<section class="tab on" id="tab-arch">
+  <div class="grid">
+    <div>
+      <div class="layer">
+        <h3>客户端 / 代码源</h3>
+        <div class="row r2">
+          <div class="comp" data-c="repo"><div class="n"><span class="dot d-s"></span>GitHub / GitLab</div><div class="d">push · PR · tag 事件来源</div></div>
+          <div class="comp" data-c="ui"><div class="n"><span class="dot d-s"></span>Web UI（SPA）</div><div class="d">项目列表 · 构建详情 · 实时日志</div></div>
+        </div>
+      </div>
+
+      <div class="layer acc">
+        <h3 class="acc">Access 层 · 接入与鉴权</h3>
+        <div class="row r3">
+          <div class="comp" data-c="webhook"><div class="n"><span class="dot d-b"></span>Webhook Handler</div><div class="d">验签 · 幂等 · 立即入队</div></div>
+          <div class="comp" data-c="restapi"><div class="n"><span class="dot d-b"></span>REST API</div><div class="d">项目 / 构建 / 日志 / 密钥</div></div>
+          <div class="comp" data-c="auth"><div class="n"><span class="dot d-b"></span>认证 · 鉴权</div><div class="d">用户 · 角色 · 会话</div></div>
+        </div>
+      </div>
+
+      <div class="layer core">
+        <h3 class="core">Core 层 · 调度与执行</h3>
+        <div class="row r3" style="margin-bottom:10px">
+          <div class="comp" data-c="scheduler"><div class="n"><span class="dot d-g"></span>Scheduler</div><div class="d">持久化队列 · 任务分发</div></div>
+          <div class="comp" data-c="fsm"><div class="n"><span class="dot d-g"></span>State Machine</div><div class="d">迁移校验 · 事件审计</div></div>
+          <div class="comp" data-c="reconciler"><div class="n"><span class="dot d-g"></span>Reconciler</div><div class="d">孤儿恢复 · 超时清理</div></div>
+        </div>
+        <div style="border:1px dashed var(--line2);border-radius:10px;padding:11px;">
+          <div style="font-size:11px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase;margin-bottom:9px;font-weight:700">Worker Pool —— 信号量限流（最大并发 N）</div>
+          <div class="row r3">
+            <div class="comp" data-c="builder"><div class="n"><span class="dot d-g"></span>Builder</div><div class="d">Docker 容器隔离构建</div></div>
+            <div class="comp" data-c="deployer"><div class="n"><span class="dot d-g"></span>Deployer</div><div class="d">SSH 部署 · 健康检查 · 回滚</div></div>
+            <div class="comp" data-c="diagnoser"><div class="n"><span class="dot d-g"></span>Diagnoser</div><div class="d">LLM 智能诊断（异步）</div></div>
+          </div>
+        </div>
+        <div class="row r1" style="margin-top:10px">
+          <div class="comp" data-c="logpipe"><div class="n"><span class="dot d-p"></span>Log Pipe</div><div class="d">channel 广播 · ring buffer · SSE 实时推送</div></div>
+        </div>
+      </div>
+
+      <div class="row r2" style="margin-top:2px">
+        <div class="layer stor" style="margin-bottom:0">
+          <h3 class="stor">Storage 层</h3>
+          <div class="comp" data-c="storage"><div class="n"><span class="dot d-a"></span>SQLite / PostgreSQL</div><div class="d">项目 · 构建 · 部署 · 事件审计 · 对象存储 · AES-GCM 密钥库</div></div>
+        </div>
+        <div class="layer ext" style="margin-bottom:0">
+          <h3 class="ext">External（接口抽象，可打桩单测）</h3>
+          <div class="comp" data-c="external"><div class="n"><span class="dot d-r"></span>Docker · SSH · LLM API</div><div class="d">构建容器 · 目标主机 · OpenAI 兼容协议</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail" id="detail">
+      <div class="empty">← 点击任意模块<br>查看职责、关键设计与 Go 代码</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ ② 流水线 ═══════════ -->
+<section class="tab" id="tab-pipe">
+  <div class="grid">
+    <div>
+      <div class="stages" id="stages"></div>
+      <div class="diag" id="diag">
+        <h3><span class="dot d-p"></span>LLM 智能诊断</h3>
+        <div class="row2"><span>根因</span><b id="dg-root"></b></div>
+        <div class="row2"><span>建议</span><span2 id="dg-fix" style="color:#c3d2ea"></span2></div>
+        <div class="meta" id="dg-meta"></div>
+      </div>
+    </div>
+    <div>
+      <div class="ctl">
+        <button class="btn" id="run">▶ 运行一次构建</button>
+        <button class="btn ghost" id="reset">重置</button>
+        <label class="chk"><input type="checkbox" id="failmode">模拟构建失败</label>
+      </div>
+      <div class="term" id="term"><div class="ln inf">$ devopsd start --config ./config.yaml<span class="cursor"></span></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ ③ 状态机 ═══════════ -->
+<section class="tab" id="tab-fsm">
+  <div class="fsm-layout">
+    <div>
+      <svg class="states" viewBox="0 0 1100 360" id="fsmsvg"></svg>
+    </div>
+    <div class="detail" id="fsmdetail">
+      <div class="empty">← 点击任意状态<br>查看其允许的迁移与校验代码</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ ④ 并发 ═══════════ -->
+<section class="tab" id="tab-conc">
+  <div class="ctl">
+    <button class="btn" id="conc-run">▶ 提交 12 个构建任务</button>
+    <button class="btn ghost" id="conc-reset">重置</button>
+    <span style="font-size:12.5px;color:var(--muted)">信号量容量 N = 4 &nbsp;·&nbsp; 观察背压：队列满 → webhook 503 → 平台自动重试</span>
+  </div>
+
+  <div class="slots" id="slots"></div>
+  <div style="font-size:11.5px;color:var(--dim);letter-spacing:.07em;text-transform:uppercase;margin-bottom:7px;font-weight:700">待处理队列（DB 持久化）</div>
+  <div class="qbox" id="queue"></div>
+
+  <div class="metrics">
+    <div class="metric"><div class="k">已完成</div><div class="v" id="m-done" style="color:var(--green)">0</div></div>
+    <div class="metric"><div class="k">执行中</div><div class="v" id="m-run" style="color:var(--blue)">0</div></div>
+    <div class="metric"><div class="k">排队中</div><div class="v" id="m-q" style="color:var(--amber)">0</div></div>
+    <div class="metric"><div class="k">峰值 goroutine</div><div class="v" id="m-g" style="color:var(--purple)">0</div></div>
+  </div>
+
+  <div style="margin-top:26px" class="layer">
+    <h3>goroutine 拓扑</h3>
+    <div class="tree">
+      <div class="tnode"><span class="bullet" style="background:var(--purple)"></span><span class="nm">main</span><span class="cnt">× 1</span><span class="note">装配依赖 · 启动 · 优雅关闭</span></div>
+      <div class="tnode indent1"><span class="bullet" style="background:var(--dim)"></span><span class="nm">Scheduler</span><span class="cnt">× 1</span><span class="note">从队列取任务，同项目串行化，防并发部署打架</span></div>
+      <div class="tnode indent1"><span class="bullet" style="background:var(--green)"></span><span class="nm">Worker Pool</span><span class="cnt">× N</span><span class="note">semaphore 限流，每个构建一个 goroutine</span></div>
+      <div class="tnode indent2"><span class="bullet" style="background:var(--green)"></span><span class="nm">Builder</span><span class="note">Docker 容器隔离执行，ctx 超时取消</span></div>
+      <div class="tnode indent2"><span class="bullet" style="background:var(--green)"></span><span class="nm">Log Reader</span><span class="note">读容器 stdout/stderr → LogPipe</span></div>
+      <div class="tnode indent2"><span class="bullet" style="background:var(--green)"></span><span class="nm">Log Writer</span><span class="note">批量落库，慢订阅者丢弃</span></div>
+      <div class="tnode indent2"><span class="bullet" style="background:var(--purple)"></span><span class="nm">Diagnoser</span><span class="note">失败时异步调 LLM，不阻塞状态流转</span></div>
+      <div class="tnode indent1"><span class="bullet" style="background:var(--blue)"></span><span class="nm">HTTP Server</span><span class="cnt">× M</span><span class="note">net/http 每请求一个 goroutine</span></div>
+      <div class="tnode indent2"><span class="bullet" style="background:var(--blue)"></span><span class="nm">SSE handler</span><span class="note">订阅 LogPipe 写入响应，慢客户端丢弃</span></div>
+      <div class="tnode indent1"><span class="bullet" style="background:var(--amber)"></span><span class="nm">Reconciler</span><span class="cnt">× 1</span><span class="note">周期恢复孤儿任务 · 超时清理</span></div>
+      <div class="tnode indent1"><span class="bullet" style="background:var(--red)"></span><span class="nm">signal handler</span><span class="cnt">× 1</span><span class="note">SIGTERM → 停止取新任务 → wg.Wait() 宽限期</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ ⑤ 里程碑 ═══════════ -->
+<section class="tab" id="tab-road">
+  <div class="road" id="road"></div>
+</section>
+
+<footer>
+  图表配色即语义：<b style="color:var(--blue)">蓝</b> 进行中 / 接入 &nbsp;·&nbsp;
+  <b style="color:var(--green)">绿</b> 成功路径 / 核心层 &nbsp;·&nbsp;
+  <b style="color:var(--red)">红</b> 失败 / 外部系统 &nbsp;·&nbsp;
+  <b style="color:var(--amber)">橙</b> 回滚 / 存储 &nbsp;·&nbsp;
+  <b style="color:var(--purple)">紫</b> 日志管道 / 异步诊断
+  <br>所有外部依赖（Docker / SSH / LLM）经 <code class="inl">platform/</code> 接口抽象，单测可脱离真实环境运行。
+</footer>
+
+</div>
+
+<script>
+/* ══════════ 通用 ══════════ */
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* ══════════ Tab 切换 ══════════ */
+function switchTab(name){
+  const btn = document.querySelector(`.tab-btn[data-tab="${name}"]`);
+  if (!btn) return;
+  $$('.tab-btn').forEach(x => x.classList.toggle('on', x === btn));
+  $$('.tab').forEach(t => t.classList.toggle('on', t.id === 'tab-' + name));
+}
+$$('.tab-btn').forEach(b => b.addEventListener('click', () => {
+  switchTab(b.dataset.tab);
+  history.replaceState(null, '', '#' + b.dataset.tab);
+}));
+// 支持 index.html#pipe / #fsm / #conc / #road 直达，便于答辩时快速切页
+if (location.hash) switchTab(location.hash.slice(1));
+
+/* ══════════ ① 架构详情 ══════════ */
+const COMP = {
+  repo: { tag:'代码源', n:'GitHub / GitLab', d:'通过 Webhook 把代码事件推送给系统，是整条流水线的触发点。',
+    pts:['支持 push / PR / tag 三类事件','解析为统一的内部事件结构，加平台只加 parser','各项目独立 webhook secret'],
+    code:'// 平台事件 → 统一内部结构\ntype BuildRequest struct {\n    RepoFullName string\n    CommitSHA    string\n    Ref          string\n    Trigger      Trigger   // push | pr | tag | manual\n}' },
+  ui: { tag:'客户端', n:'Web UI（SPA）', d:'面向用户的管理界面，通过 REST 查询数据、通过 SSE 接收实时日志。',
+    pts:['项目列表带状态徽章','构建详情页 = 日志终端 + AI 诊断卡片','实时日志用 EventSource + 虚拟滚动','设计参考 Vercel / GitHub Actions 的信息密度'],
+    code:'// SSE 订阅实时日志\nconst es = new EventSource(`/api/builds/${id}/logs/stream`);\nes.onmessage = e => appendLog(JSON.parse(e.data));\nes.onerror = () => es.close();  // 浏览器自动重连' },
+  webhook: { tag:'Access 层', n:'Webhook Handler', d:'接收并验签代码事件，解析后立即入队，绝不在此做构建。',
+    pts:['HMAC-SHA256 验签，防伪造触发','io.LimitReader 限制请求体 1MB，防内存打爆','同一 commit SHA + ref 短时幂等去重','立即返回 202 —— 同步构建必然触发平台超时重试风暴'],
+    code:'func (h *WebhookHandler) GitHub(w http.ResponseWriter, r *http.Request) {\n    body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))\n    if !verifyHMAC(r.Header.Get("X-Hub-Signature-256"), body, h.secret) {\n        http.Error(w, "bad signature", http.StatusUnauthorized)\n        return\n    }\n    var ev githubEvent\n    json.Unmarshal(body, &ev)\n\n    err := h.queue.Enqueue(ctx, BuildRequest{\n        RepoFullName: ev.Repository.FullName,\n        CommitSHA:    ev.After,\n        Ref:          ev.Ref,\n        Trigger:      TriggerPush,\n    })\n    if err != nil {\n        http.Error(w, "queue full", http.StatusServiceUnavailable)\n        return\n    }\n    w.WriteHeader(http.StatusAccepted)   // 立即 ACK，不阻塞\n}' },
+  restapi: { tag:'Access 层', n:'REST API Handler', d:'项目 CRUD、手动触发、构建历史、日志查询、密钥管理与回滚入口。',
+    pts:['分页统一 cursor 方式，避免 offset 深翻页','所有 handler 走 context，客户端断开即取消下游','回滚接口只接受「目标构建 ID」，版本解析在服务端完成'],
+    code:'r.Route("/api", func(r chi.Router) {\n    r.Use(auth.Middleware)\n    r.Get("/projects", h.ListProjects)\n    r.Post("/projects/{id}/builds", h.TriggerBuild)\n    r.Get("/builds/{id}/logs/stream", h.StreamLogs)   // SSE\n    r.Post("/builds/{id}/rollback", h.Rollback)\n})' },
+  auth: { tag:'Access 层', n:'认证 · 鉴权（RBAC）', d:'小型团队只需要两级角色，不必上完整的 RBAC 模型。',
+    pts:['admin：管理部署目标、查看全部密钥','member：触发构建、查看日志、回滚','密码用 bcrypt / argon2 哈希','JWT 或 session 均可，密钥经环境变量注入'],
+    code:'type Role string\n\nconst (\n    RoleAdmin  Role = "admin"\n    RoleMember Role = "member"\n)\n\nfunc RequireRole(want Role) func(http.Handler) http.Handler {\n    return func(next http.Handler) http.Handler {\n        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {\n            if userFrom(r.Context()).Role != want {\n                http.Error(w, "forbidden", http.StatusForbidden)\n                return\n            }\n            next.ServeHTTP(w, r)\n        })\n    }\n}' },
+  scheduler: { tag:'Core 层', n:'Scheduler', d:'维护持久化队列，原子认领任务，分发给 Worker，并对同一项目串行化。',
+    pts:['认领必须原子：多实例下同一构建不能被跑两次','SQLite 用 UPDATE...WHERE state=\'queued\' RETURNING，PG 用 FOR UPDATE SKIP LOCKED','同一项目串行化 —— 避免两个部署同时改同一台机器','崩溃恢复：启动时扫描孤儿构建'],
+    code:'func (s *Store) ClaimQueuedBuilds(ctx context.Context, n int) ([]*Build, error) {\n    // 原子认领：state 从 queued 翻转为 running，返回被认领的行\n    const q = `UPDATE builds SET state = \'running\', started_at = datetime(\'now\')\n               WHERE id IN (SELECT id FROM builds WHERE state = \'queued\'\n                            ORDER BY id LIMIT ?)\n               RETURNING id, project_id, commit_sha`\n    rows, err := s.db.QueryContext(ctx, q, n)\n    // ...\n}' },
+  fsm: { tag:'Core 层', n:'State Machine', d:'把构建与部署的生命周期建模成受约束的状态机，非法迁移直接拒绝。',
+    pts:['只允许沿预定义边迁移，防止并发写坏状态','每次迁移写一条 build_events，支持时序回放与审计','同一构建的事件由单 goroutine 串行消费，避免锁竞争'],
+    code:'var allowed = map[State][]State{\n    StateQueued:    {StateRunning, StateCancelled},\n    StateRunning:   {StateSucceeded, StateFailed},\n    StateSucceeded: {StateDeploying},\n    StateDeploying: {StateDeployed, StateDeployFailed},\n    StateDeployFailed: {StateRolledBack},\n    StateDeployed:     {StateRolledBack},\n}\n\nfunc (f *FSM) Transition(to State) error {\n    for _, ok := range allowed[f.state] {\n        if ok == to {\n            f.emit(f.state, to)   // 写 build_events\n            f.state = to\n            return nil\n        }\n    }\n    return fmt.Errorf("illegal transition %s → %s", f.state, to)\n}' },
+  reconciler: { tag:'Core 层', n:'Reconciler', d:'周期性对账，处理进程异常退出留下的孤儿任务与超时任务。',
+    pts:['启动时把 running / deploying 的孤儿构建标记为 failed(interrupted)','周期扫描长时间未心跳的在跑构建，按策略重试或终止','清理过期日志分块与旧版本产物'],
+    code:'func (r *Reconciler) Run(ctx context.Context) {\n    t := time.NewTicker(30 * time.Second)\n    defer t.Stop()\n    for {\n        select {\n        case <-ctx.Done():\n            return\n        case <-t.C:\n            r.reapOrphans(ctx)    // 标记孤儿构建\n            r.reapTimeouts(ctx)   // 超时终止\n            r.gcArtifacts(ctx)    // 保留最近 K 个版本\n        }\n    }\n}' },
+  builder: { tag:'Worker Pool', n:'Builder', d:'在干净容器里拉代码、跑构建步骤、产出镜像或产物，结束后必然销毁容器。',
+    pts:['环境一致 + 安全隔离：用户的构建脚本不能跑在你的进程里','base image 由项目类型自动检测决定','清理必须用 context.WithoutCancel，否则 ctx 取消后容器泄漏','构建容器不挂 Docker socket，防逃逸'],
+    code:'func (b *Builder) Execute(ctx context.Context, job *Job) error {\n    steps := b.detector.Pipeline(job.Workspace)\n\n    resp, err := b.docker.ContainerCreate(ctx, &container.Config{\n        Image: steps.BaseImage,\n        Cmd:   []string{"sh", "-c", steps.Script},\n        Env:   job.Secrets.AsEnv(),      // 只注入必要 secret\n    }, nil, nil, nil, "build-"+job.ID)\n    if err != nil {\n        return err\n    }\n    // 关键：独立 context 做清理，否则取消后容器泄漏\n    defer b.docker.ContainerRemove(\n        context.WithoutCancel(ctx), resp.ID, container.RemoveOptions{Force: true})\n\n    return b.docker.ContainerStart(ctx, resp.ID, container.StartOptions{})\n}' },
+  deployer: { tag:'Worker Pool', n:'Deployer', d:'把构建产物发布到目标主机：SSH 执行 docker-compose 更新，健康检查失败则自动回滚。',
+    pts:['Host key 必须校验（ssh.FixedHostKey），否则是中间人漏洞','部署后健康检查：HTTP 探活 N 次，失败即判定失败','自动回滚：用上一个成功版本重新部署，状态置 rolled_back','目标机保留最近 K 个版本供手动回滚选择'],
+    code:'func (d *Deployer) Deploy(ctx context.Context, job *Job) error {\n    cfg := ssh.ClientConfig{\n        User:            d.host.User,\n        Auth:            []ssh.AuthMethod{ssh.PublicKeys(d.host.Key)},\n        HostKeyCallback: ssh.FixedHostKey(d.host.PubKey),  // 必须校验！\n        Timeout:         15 * time.Second,\n    }\n    client, err := ssh.Dial("tcp", d.host.Addr, &cfg)\n    if err != nil {\n        return err\n    }\n    defer client.Close()\n\n    sess, _ := client.NewSession()\n    defer sess.Close()\n    sess.Stdout, sess.Stderr = job.Logs, job.Logs\n\n    script := fmt.Sprintf("cd %s && IMAGE_TAG=%s docker-compose up -d",\n        d.host.Path, job.ImageTag)\n    if err := sess.Run(script); err != nil {\n        return fmt.Errorf("deploy failed: %w", err)\n    }\n    return d.healthCheck(ctx)   // 失败 → 触发 rollback\n}' },
+  diagnoser: { tag:'Worker Pool', n:'Diagnoser', d:'构建或部署失败时，把日志交给 LLM，产出自然语言的可能原因与修复建议。',
+    pts:['本质是 HTTP 客户端 —— 推理跑在 Python/vLLM 服务里，Go 只调它','异步执行：构建已 failed，诊断是补充信息，不阻塞状态流转','上下文裁剪：头部（步骤）+ 尾部（错误）+ 中间省略占位','脱敏：发给 LLM 前过滤已知 secret，防日志里的 token 外泄','失败不影响构建结果 —— 超时 + 指数退避重试 2 次'],
+    code:'func (d *Diagnoser) Diagnose(ctx context.Context, job *Job) (string, error) {\n    ctx, cancel := context.WithTimeout(ctx, 90*time.Second)\n    defer cancel()\n\n    payload := ChatRequest{\n        Model: d.model,\n        Messages: []Message{\n            {Role: "system", Content: diagnoserSystemPrompt},\n            {Role: "user", Content: "构建日志（尾部）：\\n" +\n                redact(tail(job.Logs, 8000), job.Secrets)},\n        },\n    }\n    body, _ := json.Marshal(payload)\n    req, _ := http.NewRequestWithContext(ctx, http.MethodPost,\n        d.baseURL+"/chat/completions", bytes.NewReader(body))\n    req.Header.Set("Authorization", "Bearer "+d.apiKey)\n\n    resp, err := d.http.Do(req)\n    // ... decode Choices[0].Message.Content\n}' },
+  logpipe: { tag:'Core 层', n:'Log Pipe', d:'把构建日志扇出给所有订阅者，同时落库归档；慢订阅者必须被丢弃而不是阻塞。',
+    pts:['慢订阅者丢弃 —— 否则一个卡住的浏览器会阻塞整个构建的日志写入','ring buffer 缓存最近 N 行，新连接先补发历史','落库做批量 flush（每 200 行或每 2s），别一行一次 IO','用 SSE 而非 WebSocket —— 单向推送不需要双向通道'],
+    code:'func (p *LogPipe) Write(line LogLine) {\n    p.ring.Write(line)\n\n    p.mu.Lock()\n    defer p.mu.Unlock()\n    for _, ch := range p.subs {\n        select {\n        case ch <- line:          // 正常投递\n        default:\n            p.dropped.Add(1)      // 订阅者太慢 → 丢弃，绝不阻塞！\n        }\n    }\n}' },
+  storage: { tag:'Storage 层', n:'SQLite / PostgreSQL + 对象存储', d:'元数据入库保证状态一致，大文本与产物走文件 / 对象存储。',
+    pts:['日志按 seq 分块存 BLOB 并压缩，一行一存主表会撑爆','secrets 与 SSH 私钥 AES-GCM 加密存为 BLOB','主密钥只从环境变量读，绝不入库','sqlc 生成类型安全查询，golang-migrate 管 schema 版本'],
+    code:'-- 部分索引：调度器只查活跃构建，索引小且热\nCREATE INDEX idx_builds_state ON builds(state)\n    WHERE state IN (\'queued\', \'running\', \'deploying\');\n\n-- 回滚链显式建模，不靠时间戳猜\nCREATE TABLE deployments (\n    id                     INTEGER PRIMARY KEY,\n    build_id               INTEGER NOT NULL REFERENCES builds(id),\n    previous_deployment_id INTEGER REFERENCES deployments(id),\n    image_tag              TEXT NOT NULL,\n    state                  TEXT NOT NULL\n);' },
+  external: { tag:'External', n:'Docker · SSH · LLM API', d:'全部外部依赖经接口抽象，单测可脱离真实环境运行。',
+    pts:['Docker SDK：容器全生命周期控制','golang.org/x/crypto/ssh：官方维护的 SSH 客户端','LLM：OpenAI 兼容协议，云端 / vLLM / Ollama 只换 base URL','打桩即可测并发、状态机与错误路径，不必起真容器'],
+    code:'type Client interface {\n    CreateContainer(ctx context.Context, spec ContainerSpec) (ContainerID, error)\n    StartContainer(ctx context.Context, id ContainerID) error\n    WaitContainer(ctx context.Context, id ContainerID) (int64, error)\n    StreamLogs(ctx context.Context, id ContainerID) (io.ReadCloser, error)\n    Commit(ctx context.Context, id ContainerID, tag string) error\n    Remove(ctx context.Context, id ContainerID, force bool) error\n    Ping(ctx context.Context) error\n}' },
+};
+
+$$('.comp').forEach(el => el.addEventListener('click', () => {
+  $$('.comp').forEach(x => x.classList.toggle('on', x === el));
+  const c = COMP[el.dataset.c];
+  if (!c) return;
+  $('#detail').innerHTML = `
+    <div class="tag">${c.tag}</div>
+    <h2>${c.n}</h2>
+    <p class="desc">${c.d}</p>
+    <h4>关键设计</h4>
+    <ul>${c.pts.map(p => `<li>${p}</li>`).join('')}</ul>
+    <h4>Go 实现</h4>
+    <pre>${c.code.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
+}));
+
+// 默认选中 Scheduler，避免右栏初始为空白
+{ const d0 = document.querySelector('.comp[data-c="scheduler"]'); if (d0) d0.click(); }
+
+/* ══════════ ② 流水线演示 ══════════ */
+const STAGES = [
+  { id:'hook',   lbl:'触发',   msg:'接收 push 事件' },
+  { id:'queue',  lbl:'入队',   msg:'写入 queued' },
+  { id:'detect', lbl:'检测',   msg:'识别项目类型' },
+  { id:'build',  lbl:'构建',   msg:'Docker 隔离执行' },
+  { id:'art',    lbl:'产物',   msg:'提交镜像 tag' },
+  { id:'deploy', lbl:'部署',   msg:'SSH docker-compose' },
+  { id:'health', lbl:'健康检查', msg:'HTTP 探活' },
+];
+
+function renderStages(){
+  $('#stages').innerHTML = STAGES.map((s,i) =>
+    `<div class="stage" data-s="${s.id}">
+       <div class="idx">${i+1}</div>
+       <div class="lbl">${s.lbl}</div>
+       <div class="msg">${s.msg}</div>
+     </div>`).join('');
+}
+renderStages();
+
+const SHA = 'a3f9c21';
+function ts(){
+  const d = new Date();
+  return String(d.getHours()).padStart(2,'0') + ':' +
+         String(d.getMinutes()).padStart(2,'0') + ':' +
+         String(d.getSeconds()).padStart(2,'0');
+}
+function log(text, cls){
+  const t = $('#term');
+  const last = t.querySelector('.cursor');
+  if (last) last.remove();
+  const div = document.createElement('div');
+  div.className = 'ln ' + (cls || '');
+  div.innerHTML = `<span class="t">[${ts()}]</span> ${text}`;
+  t.appendChild(div);
+  const cur = document.createElement('div');
+  cur.className = 'ln inf';
+  cur.innerHTML = '<span class="cursor"></span>';
+  t.appendChild(cur);
+  t.scrollTop = t.scrollHeight;
+}
+function resetLog(){
+  $('#term').innerHTML =
+    '<div class="ln inf">$ devopsd start --config ./config.yaml<span class="cursor"></span></div>';
+}
+function clearStages(){
+  $$('.stage').forEach(s => s.className = 'stage');
+}
+function setStage(id, cls, msg){
+  const el = document.querySelector(`.stage[data-s="${id}"]`);
+  if (!el) return;
+  el.classList.remove('active','ok','err');
+  if (cls) el.classList.add(cls);
+  if (msg) el.querySelector('.msg').textContent = msg;
+}
+
+let running = false;
+
+const OK_STEPS = [
+  ['hook',  'active', 400, [['收到 push 事件 repo=<b>acme/web-api</b> ref=refs/heads/main sha='+SHA,'']]],
+  ['hook',  'ok',     350, [['hmac: 签名校验通过','ok'],['api: 返回 <b>202 Accepted</b>（2ms，不阻塞）','ok']]],
+  ['queue', 'active', 400, [['queue: 构建 <b>#42</b> 已入队（state=queued → DB）','inf']]],
+  ['queue', 'ok',     300, [['scheduler: 原子认领 #42，获取信号量槽位 1/4','inf']]],
+  ['detect','active', 500, [['detect: 发现 package.json → 项目类型 <b>node</b>',''],['detect: base image = node:20-alpine，生成 Pipeline 快照','']]],
+  ['detect','ok',     300, [['state: queued → <b>running</b>','ok']]],
+  ['build', 'active', 500, [['docker: 创建容器 build-42 (node:20-alpine)','']]],
+  ['build', 'active', 700, [['build: npm ci',''],['build: added 412 packages in 5s','']]],
+  ['build', 'active', 600, [['build: npm run build',''],['build: vite v5.2.0 building for production...','']]],
+  ['build', 'ok',     500, [['build: ✓ 1843 modules transformed','ok'],['build: dist/assets/index-'+SHA+'.js  142.31 kB │ gzip: 45.87 kB','ok']]],
+  ['art',   'active', 400, [['artifact: 收集产物 dist/ (1.2 MB)','']]],
+  ['art',   'ok',     400, [['docker: commit → registry.local/web-api:'+SHA,'ok'],['docker: 移除容器 build-42（defer 必然清理）','']]],
+  ['deploy','active', 500, [['state: running → <b>succeeded</b>','ok'],['deploy: SSH 连接 deploy@10.0.0.8:22（host key 校验通过）','']]],
+  ['deploy','active', 700, [['deploy: cd /srv/web-api && IMAGE_TAG='+SHA+' docker-compose up -d',''],['deploy: Container web-api  Started','ok']]],
+  ['deploy','ok',     400, [['state: succeeded → <b>deploying</b>','inf']]],
+  ['health','active', 800, [['health: GET http://10.0.0.8:8080/healthz → 200 (1/3)',''],['health: → 200 (2/3)',''],['health: → 200 (3/3) 通过','ok']]],
+  ['health','ok',     300, [['state: deploying → <b>deployed</b>','ok'],['done: 构建 #42 完成，总耗时 28s · 新版本已上线','ok']]],
+];
+
+const FAIL_STEPS = [
+  ['hook',  'active', 350, [['收到 push 事件 repo=<b>acme/web-api</b> ref=refs/heads/main sha=7b1e044','']]],
+  ['hook',  'ok',     300, [['hmac: 签名校验通过','ok'],['api: 返回 <b>202 Accepted</b>（2ms）','ok']]],
+  ['queue', 'active', 350, [['queue: 构建 <b>#43</b> 已入队','inf']]],
+  ['queue', 'ok',     300, [['scheduler: 原子认领 #43，信号量槽位 1/4','inf']]],
+  ['detect','active', 450, [['detect: 发现 package.json → 项目类型 <b>node</b>','']]],
+  ['detect','ok',     250, [['state: queued → <b>running</b>','ok']]],
+  ['build', 'active', 500, [['docker: 创建容器 build-43 (node:20-alpine)',''],['build: npm ci → added 412 packages in 5s','']]],
+  ['build', 'active', 700, [['build: npm run build','']]],
+  ['build', 'err',    600, [['build: src/api/client.ts:42:18 - error <b>TS2345</b>: Argument of type \'string\' is not assignable to parameter of type \'number\'.','err'],['build: npm ERR! code ELIFECYCLE','err'],['build: npm ERR! Exit status 2','err'],['docker: 容器退出码 2','err']]],
+  ['build', 'err',    350, [['state: running → <b>failed</b>','err'],['docker: 移除容器 build-43','']]],
+];
+
+async function runPipeline(){
+  if (running) return;
+  running = true;
+  $('#run').disabled = true;
+  $('#diag').classList.remove('on');
+  clearStages();
+  resetLog();
+
+  const fail = $('#failmode').checked;
+  const steps = fail ? FAIL_STEPS : OK_STEPS;
+
+  for (const [stage, cls, delay, lines] of steps){
+    setStage(stage, cls);
+    await sleep(delay);
+    for (const [text, lc] of lines) log(text, lc);
+  }
+
+  if (fail){
+    await sleep(400);
+    log('diagnose: 日志尾部 8192B 已脱敏，提交至 LLM（异步，不阻塞）','warn');
+    await sleep(500);
+    setStage('build','err','构建失败 → 触发诊断');
+    await sleep(600);
+    log('diagnose: 收到诊断建议，状态标记 diagnosed','warn');
+    $('#dg-root').textContent = 'TypeScript 类型错误 —— src/api/client.ts 第 42 行把 string 传给了期望 number 的参数。';
+    $('#dg-fix').textContent = '检查该函数的调用签名；若该值来自环境变量或 JSON，需用 Number(...) 显式转换后再传入，或在类型定义处放宽为 string | number。';
+    $('#dg-meta').textContent = '模型 gpt-4o-mini · 耗时 3.8s · 输入 2.1K tokens · 置信度 高 · 脱敏 3 处';
+    $('#diag').classList.add('on');
+  }
+
+  running = false;
+  $('#run').disabled = false;
+}
+
+$('#run').addEventListener('click', runPipeline);
+$('#reset').addEventListener('click', () => {
+  if (running) return;
+  clearStages(); resetLog(); $('#diag').classList.remove('on');
+});
+
+/* ══════════ ③ 状态机 ══════════ */
+const FSM = {
+  queued:      { x:20,  y:60,  fill:'#141f35', stroke:'#5f7396', label:'queued',      to:['running'] },
+  running:     { x:230, y:60,  fill:'#132a4a', stroke:'#4d8dfb', label:'running',     to:['succeeded','failed'] },
+  succeeded:   { x:440, y:60,  fill:'#0e2b22', stroke:'#34d399', label:'succeeded',   to:['deploying'] },
+  deploying:   { x:650, y:60,  fill:'#132a4a', stroke:'#4d8dfb', label:'deploying',   to:['deployed','deploy_failed'] },
+  deployed:    { x:860, y:60,  fill:'#0e2b22', stroke:'#34d399', label:'deployed',    to:['rolled_back'] },
+  diagnosed:   { x:20,  y:250, fill:'#151029', stroke:'#a78bfa', label:'diagnosed',   to:[], dash:true },
+  failed:      { x:230, y:250, fill:'#1c1113', stroke:'#f87171', label:'failed',      to:['diagnosed'] },
+  deploy_fail: { x:650, y:250, fill:'#1c1113', stroke:'#f87171', label:'deploy_failed', to:['rolled_back'] },
+  rolled_back: { x:860, y:250, fill:'#221a08', stroke:'#fbbf24', label:'rolled_back', to:[] },
+};
+const W = 130, H = 52;
+const FSM_DETAIL = {
+  queued:      { d:'构建请求已持久化入队，等待 worker 认领。这是系统崩溃后唯一需要恢复的状态。',
+    notes:['入队即落库，进程重启不丢任务','支持重试：failed → queued（手动）'], back:'' },
+  running:     { d:'worker 已认领，正在 Docker 容器中执行构建步骤。',
+    notes:['带 ctx 超时（默认 30min），超时自动 kill 容器','同项目串行化：不会有两个构建同时改同一台机器'], back:'queued' },
+  succeeded:   { d:'构建成功，产物镜像已提交，等待部署。',
+    notes:['产物：镜像 tag 或 tar 包','pipeline_json 存本次执行的步骤快照，保证可复现'], back:'running' },
+  deploying:   { d:'正在把新版本发布到目标主机。',
+    notes:['SSH 执行 docker-compose up -d 新镜像','host key 校验防中间人'], back:'succeeded' },
+  deployed:    { d:'部署完成且健康检查通过，新版本已对外服务。',
+    notes:['健康检查 N 次通过才判定成功','目标机保留最近 K 个版本供回滚'], back:'deploying' },
+  diagnosed:   { d:'异步标记位 —— 表示 LLM 诊断已完成，不参与主干状态机。',
+    notes:['诊断失败不影响构建结果','相同错误签名可缓存诊断结果省 token'], back:'failed' },
+  failed:      { d:'构建失败终态。可能触发异步 LLM 诊断。',
+    notes:['退出码非 0 或超时即进入此状态','诊断在独立 goroutine 中执行'], back:'running' },
+  deploy_fail: { d:'部署失败：SSH 报错或健康检查不通过。',
+    notes:['开启自动回滚时，会立即用上一个成功版本重部署'], back:'deploying' },
+  rolled_back: { d:'已回滚到上一个成功版本。',
+    notes:['自动回滚（deploy_failed 触发）与手动回滚（deployed 触发）殊途同归','回滚链通过 deployments.previous_deployment_id 显式建模'], back:'deployed / deploy_failed' },
+};
+
+function drawFSM(){
+  const S = $('#fsmsvg');
+  const edges = [
+    ['queued','running','认领'], ['running','succeeded','构建成功'], ['succeeded','deploying','触发部署'],
+    ['deploying','deployed','健康检查通过'], ['deploy_fail','rolled_back','自动回滚'],
+  ];
+  let g = '';
+  // defs
+  g += `<defs><marker id="ah" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="7" markerHeight="7"
+        orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#5f7396"/></marker></defs>`;
+
+  // 水平边
+  for (const [a,b,lb] of edges){
+    const A = FSM[a], B = FSM[b];
+    const x1 = A.x + W, y1 = A.y + H/2;
+    const x2 = B.x,     y2 = B.y + H/2;
+    g += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#5f7396" stroke-width="1.8" marker-end="url(#ah)"/>`;
+    g += `<text x="${(x1+x2)/2}" y="${A.y-10}" fill="#8ba0c4" font-size="11" text-anchor="middle">${lb}</text>`;
+  }
+  // 垂直边
+  const vert = [['running','failed','构建失败','#f87171'],['deploying','deploy_fail','部署失败','#f87171'],['deployed','rolled_back','手动回滚','#fbbf24']];
+  for (const [a,b,lb,col] of vert){
+    const A = FSM[a], B = FSM[b];
+    const x = A.x + W/2;
+    g += `<line x1="${x}" y1="${A.y+H}" x2="${x}" y2="${B.y}" stroke="${col}" stroke-width="1.8" marker-end="url(#ah)"/>`;
+    g += `<text x="${x+9}" y="${(A.y+H+B.y)/2}" fill="#8ba0c4" font-size="11">${lb}</text>`;
+  }
+  // 异步虚线
+  {
+    const A = FSM.failed, B = FSM.diagnosed;
+    const y = A.y + H/2;
+    g += `<line x1="${A.x}" y1="${y}" x2="${B.x+W}" y2="${y}" stroke="#a78bfa" stroke-width="1.8"
+          stroke-dasharray="5,4" marker-end="url(#ah)"/>`;
+    g += `<text x="${(A.x+B.x+W)/2}" y="${A.y-10}" fill="#8ba0c4" font-size="11" text-anchor="middle">异步诊断</text>`;
+  }
+  // 节点
+  for (const k in FSM){
+    const s = FSM[k];
+    g += `<g class="node" data-s="${k}">
+      <rect x="${s.x}" y="${s.y}" width="${W}" height="${H}" rx="9" fill="${s.fill}" stroke="${s.stroke}"
+        stroke-width="1.8"${s.dash ? ' stroke-dasharray="5,4"' : ''}/>
+      <text x="${s.x+W/2}" y="${s.y+32}" fill="#e8eefb" font-size="13.5" font-weight="600"
+        text-anchor="middle">${s.label}</text>
+    </g>`;
+  }
+  S.innerHTML = g;
+
+  S.querySelectorAll('.node').forEach(n => n.addEventListener('click', () => {
+    S.querySelectorAll('.node').forEach(x => x.classList.remove('sel'));
+    n.classList.add('sel');
+    const k = n.dataset.s, s = FSM[k], info = FSM_DETAIL[k];
+    const outs = s.to.length ? s.to.map(t => `<li>${k} → <b>${t}</b></li>`).join('')
+                             : '<li style="color:#5f7396">终态：无出边</li>';
+    $('#fsmdetail').innerHTML = `
+      <div class="tag">状态 · ${k}</div>
+      <h2>${k}</h2>
+      <p class="desc">${info.d}</p>
+      <h4>允许的迁移</h4><ul>${outs}</ul>
+      <h4>说明</h4><ul>${info.notes.map(x => `<li>${x}</li>`).join('')}</ul>
+      <h4>迁移校验</h4>
+      <pre>func (f *FSM) Transition(to State) error {
+    for _, ok := range allowed[f.state] {
+        if ok == to {
+            f.emit(f.state, to)   // 写 build_events
+            f.state = to
+            return nil
+        }
+    }
+    return fmt.Errorf("illegal transition %s → %s", f.state, to)
+}</pre>`;
+  }));
+}
+drawFSM();
+
+/* ══════════ ④ 并发 ══════════ */
+const N = 4, TOTAL = 12;
+let slots = [], queue = [], done = 0, peakG = 0, concRunning = false;
+
+function renderSlots(){
+  $('#slots').innerHTML = slots.map((job, i) => `
+    <div class="slot ${job ? 'busy' : ''}" id="slot${i}">
+      <div class="sn">slot ${i+1}</div>
+      <div class="job">${job ? '#' + job : '空闲'}</div>
+      <div class="bar"><i id="bar${i}" style="width:${job ? 8 : 0}%"></i></div>
+    </div>`).join('');
+}
+function renderQueue(){
+  $('#queue').innerHTML = queue.length
+    ? queue.map(j => `<span class="chip run" id="q${j}">#${j}</span>`).join('')
+    : '<span style="color:var(--dim);font-size:12px">队列为空</span>';
+  const m = { '#m-done': done, '#m-run': slots.filter(Boolean).length, '#m-q': queue.length, '#m-g': peakG };
+  for (const k in m) $(k).textContent = m[k];
+}
+
+function runConcurrency(){
+  if (concRunning) return;
+  concRunning = true; done = 0; peakG = 0; queue = [];
+  slots = new Array(N).fill(null);
+  renderSlots(); renderQueue();
+  const runningJobs = [];
+  let nextId = 1;
+
+  const tick = setInterval(() => {
+    if (nextId <= TOTAL){
+      queue.push(nextId++);
+      peakG = Math.max(peakG, 7 + slots.filter(Boolean).length * 4);
+      renderQueue();
+    }
+    for (let i = 0; i < N; i++){
+      if (!slots[i] && queue.length){
+        const job = queue.shift();
+        slots[i] = job; runningJobs.push({ i, job });
+        renderSlots(); renderQueue();
+        let p = 0;
+        const bar = setInterval(() => {
+          p += 14;
+          const el = $('#bar' + i);
+          if (el) el.style.width = Math.min(p, 100) + '%';
+          if (p >= 100) clearInterval(bar);
+        }, 190);
+        setTimeout(() => {
+          slots[i] = null; done++;
+          renderSlots(); renderQueue();
+          if (done === TOTAL){
+            clearInterval(tick);
+            concRunning = false;
+          }
+        }, 1400);
+      }
+    }
+    if (nextId > TOTAL && queue.length === 0 && slots.every(s => !s)) clearInterval(tick);
+  }, 260);
+}
+
+$('#conc-run').addEventListener('click', runConcurrency);
+$('#conc-reset').addEventListener('click', () => {
+  if (concRunning) return;
+  done = 0; queue = []; peakG = 0; slots = new Array(N).fill(null);
+  renderSlots(); renderQueue();
+});
+slots = new Array(N).fill(null);
+renderSlots(); renderQueue();
+
+/* ══════════ ⑤ 里程碑 ══════════ */
+const MS = [
+  { wk:'第 1–2 周', t:'M1 骨架', p:'', del:'项目 CRUD + webhook 接收 + 状态落库。',
+    acc:'验收：push 代码后，DB 中自动出现一条 queued 构建记录。' },
+  { wk:'第 3–5 周', t:'M2 构建', p:'MVP', del:'Docker 构建执行 + 项目类型自动检测 + 日志落库。',
+    acc:'验收：端到端跑通一次 Node 项目构建，日志可在 UI 查询。' },
+  { wk:'第 6 周', t:'M3 实时日志', p:'', del:'SSE 日志流 + 前端日志终端。',
+    acc:'验收：浏览器实时滚动显示构建输出。' },
+  { wk:'第 7–9 周', t:'M4 部署与回滚', p:'core', del:'SSH 部署 + 健康检查 + 自动回滚。',
+    acc:'验收：push → 构建 → 自动部署到 VPS → 访问 URL 看到新版本；健康检查失败自动回滚。' },
+  { wk:'第 10–11 周', t:'M5 智能诊断', p:'ai', del:'LLM 失败诊断 + 检测生成 pipeline 快照。',
+    acc:'验收：故意制造构建失败，UI 显示 AI 给出的根因与修复建议。' },
+  { wk:'第 12–14 周', t:'M6 并发打磨与实验', p:'core', del:'限流、优雅关闭、孤儿恢复、Prometheus 指标、并发压测。',
+    acc:'验收：go test -race 通过；并发 5 个构建稳定；取得 N=1/2/4/8/16 的吞吐与内存数据。' },
+  { wk:'第 15–16 周', t:'M7 论文与演示', p:'', del:'论文撰写 + 演示录屏。',
+    acc:'验收：完整 demo 脚本一次跑通（含失败诊断与回滚分支）。' },
+];
+$('#road').innerHTML = MS.map(m => `
+  <div class="ms">
+    <h3>${m.t}${m.p ? `<span class="pill ${m.p === 'MVP' ? 'mvp' : m.p === 'ai' ? 'ai' : 'core'}">${m.p === 'ai' ? '创新点' : m.p === 'MVP' ? '必须完成' : '核心'}</span>` : ''}</h3>
+    <div class="wk">${m.wk}</div>
+    <p class="del">${m.del}</p>
+    <div class="acc">${m.acc}</div>
+  </div>`).join('');
+</script>
+</body>
+</html>

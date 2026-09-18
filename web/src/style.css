@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 不引任何 CDN —— 字体全部走本地/系统回落，断网也不影响渲染 */
+@layer base {
+  html, body, #app { height: 100%; }
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+    font-size: 13px;
+    line-height: 18px;
+  }
+  /* 技术标识统一等宽 */
+  .mono { @apply font-mono; font-variant-ligatures: none; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2b2d30; border-radius: 5px; }
+  ::-webkit-scrollbar-thumb:hover { background: #393b40; }
+}
+
+@layer components {
+  .panel { @apply bg-surface border border-divider rounded-card; }
+  .field {
+    @apply bg-surface border border-edge rounded-ctl text-ink px-2 h-7
+           focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/30;
+  }
+  .btn {
+    @apply inline-flex items-center gap-1.5 h-7 px-2.5 rounded-ctl text-[12px]
+           font-medium transition-colors select-none disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .btn-primary { @apply btn bg-primary text-[#0b1020] hover:bg-[#c2d2ff]; }
+  .btn-ghost   { @apply btn text-muted hover:bg-hover hover:text-ink border border-transparent; }
+  .btn-outline { @apply btn text-ink border border-edge hover:bg-hover hover:border-[#4e5157]; }
+  .btn-danger  { @apply btn text-danger border border-danger/50 hover:bg-danger/10; }
+  .chip {
+    @apply inline-flex items-center gap-1 h-5 px-1.5 rounded-badge font-mono text-2xs leading-none;
+  }
+  .row-hover { @apply transition-colors hover:bg-hover; }
+}
+
+/* 日志行等宽基线对齐 */
+.logline { @apply font-mono text-[11.5px] leading-[19px] whitespace-pre-wrap break-words; }
+
+@keyframes blink { 50% { opacity: 0 } }
+.caret { display: inline-block; width: 6px; height: 12px; background: #87d894;
+         vertical-align: -2px; animation: blink 1s step-end infinite; }
