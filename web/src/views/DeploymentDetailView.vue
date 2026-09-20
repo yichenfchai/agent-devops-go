@@ -95,9 +95,14 @@ const fmt = (ms: number | null) => (ms === null ? '—' : ms >= 1000 ? `${(ms / 
     </template>
 
     <RollbackDialog
-      v-if="rollback"
+      v-if="rollback && dep"
       :build="{ id: 1, number: number, commitSha: 'a3f9c21', commitMessage: '修复部署脚本的环境变量读取', exitCode: 1 } as never"
-      :previous="{ sha: '7b1e044', message: '优化数据库查询索引', time: '2 小时前' }"
+      :previous="(() => {
+        const v = dep?.versions.find((x) => !x.tag.includes('a3f9c21'))
+        const tag = v?.tag ?? ''
+        const [, sha = ''] = tag.split(':')
+        return { sha, message: v?.state ?? '', time: v?.deployedAt ?? '' }
+      })()"
       @close="rollback = false"
     />
   </div>

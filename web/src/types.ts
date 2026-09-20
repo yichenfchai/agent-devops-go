@@ -1,6 +1,6 @@
 /**
- * 与 Go 后端 pkg/api/types.go 一一对应的类型定义。
- * 后端字段改这里也要改，保持单一事实来源。
+ * 与后端类型定义一一对应的类型定义（单一事实来源）。
+ * 后端布局为 cmd/devopsd + internal/store（sqlc 生成），字段改动须双侧同步。
  */
 
 export type BuildState =

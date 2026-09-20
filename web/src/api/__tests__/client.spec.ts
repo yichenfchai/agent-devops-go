@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import * as clientModule from '../client'
 import { http, ApiError } from '@/api/client'
 
 /**
@@ -61,6 +62,28 @@ describe('api client（真实 fetch 分支）', () => {
       expect((e as ApiError).message).toContain('503')
       expect((e as ApiError).message).toContain('Service Unavailable')
     }
+  })
+
+  it('401 全局处理：跳转登录页并带 expired 标记', async () => {
+    // jsdom 的 location.assign 不可 redefine；ESM 内部直调也不受 spyOn 影响 ——
+    // 因此 client.ts 暴露 _redirectContainer，测试直接替换其 fn
+    const calls: string[] = []
+    const original = clientModule._redirectContainer.fn
+    clientModule._redirectContainer.fn = () => { calls.push('/login?expired=1') }
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(401, {}, 'Unauthorized'))
+    await expect(http.get('/projects')).rejects.toBeInstanceOf(ApiError)
+    expect(calls).toEqual(['/login?expired=1'])
+    clientModule._redirectContainer.fn = original
+  })
+
+  it('401 但路径是 /auth/* 时不跳转（登录接口密码错误不触发循环）', async () => {
+    let called = false
+    const original = clientModule._redirectContainer.fn
+    clientModule._redirectContainer.fn = () => { called = true }
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(401, {}, 'Unauthorized'))
+    await expect(http.post('/auth/login', { email: 'x', password: 'y' })).rejects.toBeInstanceOf(ApiError)
+    expect(called).toBe(false)
+    clientModule._redirectContainer.fn = original
   })
 
   it('网络层 reject（不是 4xx/5xx）也归一化为 ApiError', async () => {

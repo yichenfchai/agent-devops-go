@@ -4,6 +4,9 @@
 > commit/push → 自动构建（Docker 隔离）→ 部署（本机 compose / SSH 远程）→ 健康检查 → 失败自动回滚 → LLM 智能诊断
 > **核心特色：人为主导的 AI 辅助运维 —— 自动化级别（LOA）可按失败类型配置，并随人工验证动态演进**
 
+> 命名说明：产品名 **GoPulse CI**；GitHub 仓库名 `agent-devops-go`；本地目录
+> `graduation-project-cicd/` 是毕业设计工作区名称 —— 三者指同一个项目。
+
 单二进制 + 一个 SQLite 文件，无外部数据库、无消息队列、无对象存储。
 **三种部署形态全部为真实交付物**（各有硬性端到端验收，见 TODO M4），同一二进制按 `-profile` 显式装配（无隐式默认，三形态地位等同）：
 
@@ -61,7 +64,8 @@ npm run test:coverage # 覆盖率报告 → coverage/index.html
 切真实后端（M1 完成后）：
 
 ```bash
-cp .env.example .env  # VITE_USE_MOCK=false
+cd web
+cp .env.example .env  # VITE_USE_MOCK=false（注意：.env.example 在 web/ 目录下）
 # vite 已把 /api 代理到 127.0.0.1:8080
 ```
 

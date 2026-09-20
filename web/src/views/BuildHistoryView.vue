@@ -18,6 +18,12 @@ const stateFilter = ref<string>('all')
 const branchFilter = ref('main')
 const rollbackTarget = ref<Build | null>(null)
 
+// 回滚弹窗的"上一版本"从已加载的构建列表派生（最近一个成功的、非当前的构建），
+// 避免在视图里写死任何 commit 信息 —— 数据只来自单一事实来源（api/mock）。
+const previousSuccess = computed(() =>
+  (builds.value ?? []).find((b) => b.state === 'deployed' && b.commitSha !== filtered.value[0]?.commitSha),
+)
+
 const filtered = computed(() => {
   let list = builds.value ?? []
   if (stateFilter.value !== 'all') list = list.filter((b) => b.state === stateFilter.value)
@@ -59,9 +65,9 @@ const TRIGGER_LABEL: Record<string, string> = {
 
     <!-- 统计卡 -->
     <div v-if="stats" class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-      <StatCard label="总构建数" :value="String(stats.total)" icon="chip" hint="+14% 环比" />
-      <StatCard label="成功率" :value="`${stats.successRate}%`" icon="check" tone="success" hint="目标 ≥ 90%" />
-      <StatCard label="平均耗时" :value="`${Math.round(stats.avgDurationMs / 1000)}s`" icon="clock" hint="-6s 加速" />
+      <StatCard label="总构建数" :value="String(stats.total)" icon="chip" />
+      <StatCard label="成功率" :value="`${stats.successRate}%`" icon="check" tone="success" />
+      <StatCard label="平均耗时" :value="`${Math.round(stats.avgDurationMs / 1000)}s`" icon="clock" />
       <StatCard label="本月部署" :value="`${stats.monthlyDeploys} 次`" icon="rocket" tone="primary" />
     </div>
 
@@ -135,7 +141,7 @@ const TRIGGER_LABEL: Record<string, string> = {
     <RollbackDialog
       v-if="rollbackTarget"
       :build="rollbackTarget"
-      :previous="{ sha: '7b1e044', message: '优化数据库查询索引', time: '2 小时前' }"
+      :previous="previousSuccess ? { sha: previousSuccess.commitSha, message: previousSuccess.commitMessage ?? '', time: previousSuccess.queuedAt ?? '' } : null"
       @close="rollbackTarget = null"
     />
   </div>

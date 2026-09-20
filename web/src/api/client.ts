@@ -42,6 +42,12 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
       signal: ctrl.signal,
     })
     if (!res.ok) {
+      // 401 全局处理：会话过期 → 统一跳登录页。经 redirect hook 间接调用，
+      // 使测试 spyOn(navigateToLogin) 能生效（ESM 内部直调不经过模块命名空间）。
+      // 登录接口自身的 401（密码错误）不触发跳转，避免循环。
+      if (res.status === 401 && !path.startsWith('/auth/')) {
+        redirect()
+      }
       throw new ApiError(`请求失败：${res.status} ${res.statusText}`, res.status, path)
     }
     if (res.status === 204) return undefined as T
@@ -57,6 +63,25 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     signal?.removeEventListener('abort', forwardAbort)
   }
 }
+
+
+
+/** 会话过期时的跳转。独立导出：未来接入 router 后可替换为 router.push。 */
+export function navigateToLogin() {
+  try {
+    location.assign('/login?expired=1')
+  } catch {
+    // jsdom 等环境不支持导航 —— 忽略，不影响原始错误的抛出
+  }
+}
+
+/**
+ * request 内部经由该 hook 调用跳转。hook 存放在可变容器中而非直调本地绑定 ——
+ * ESM 下内部直调不会经过模块命名空间，vi.spyOn 会失效；
+ * 测试通过替换 container.fn 来拦截。
+ */
+export const _redirectContainer: { fn: () => void } = { fn: navigateToLogin }
+const redirect = () => _redirectContainer.fn()
 
 export const http = {
   get:  <T>(p: string, o?: RequestOptions) => request<T>(p, { ...o, method: 'GET' }),

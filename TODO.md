@@ -33,11 +33,18 @@
       ReadDirectoryChangesW）—— 形态Ⅰ触发的前提，spike 失败则轮询兜底升为主通道（77ms/次已实测）
 - [ ] **API 契约冻结**：以 `web/openapi.yaml`（OpenAPI 3.1）为准；先决策 info 里
       列出的 6 个契约缺陷（buildNumber 全局唯一性、created_at 命名、secrets 作用域、
-      时间格式、deployment 路径、错误体），改完同步前端 `types.ts`
+      时间格式、deployment 路径、错误体），改完同步前端 `types.ts`。
+      三项已决策（2026-09-20 审查定稿）：
+      ① SSE 鉴权 = **HttpOnly cookie**（login 时同发 Set-Cookie；EventSource 无法带
+      Authorization header，查询参数 `?token=` 有泄漏风险，cookie 最简且防 XSS 读取）；
+      ② 构建详情路由统一 **`/builds/{buildId}`**（全局唯一 id），`number` 仅作展示；
+      ③ 全局 401 → 清会话态跳 `/login?expired=1`（前端 client.ts 已实现，含 /auth/* 豁免）
 - [ ] 配置加载（config.yaml + 环境变量密钥名 + **三份 profile 预设 personal/team-lite/team-full**，
       完整 YAML 见 `visual/deploy-modes.html` §5），启动时校验必填项
 - [ ] SQLite 接入（modernc.org/sqlite 纯 Go）+ golang-migrate + 001_init.sql（8 张表；
       含形态字段 `projects.source_kind/repo_path`、`deploy_hosts.kind`，见 ARCHITECTURE §3.3）
+- [ ] **开库即设 PRAGMA：`journal_mode=WAL` + `busy_timeout=5000`**（HTTP 读者 + Worker 写者 +
+      审计/日志并发写，不开 WAL 压测必现随机 SQLITE_BUSY）
 - [ ] chi 路由骨架 + 请求日志（slog）+ recover 中间件
 - [ ] REST：项目 CRUD、构建历史、`GET /api/runner`（对齐前端契约）
 - [ ] **ManualTrigger + LocalWatchTrigger**：手动按钮与本地仓库监视各写一条 `queued` 记录 →
@@ -205,3 +212,5 @@
 - [ ] `api/client.ts` 的 BASE 写死 `/api`，部署到反向代理子路径时需要配置化
 - [ ] DESIGN.md 的 YAML token 与正文 13 色值未对齐（手改一次即可，tailwind.config.js 已是准的）
 - [ ] `log_chunks.content` 的压缩格式未定（候选 zstd），落库前先定协议
+- [ ] `BuildHistoryView` 的 branchFilter 是纯 UI（未过滤数据）、分页写死 `1 / 1` ——
+      后端接上时必须接真（2026-09-20 审查发现）

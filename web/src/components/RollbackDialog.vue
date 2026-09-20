@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import Icon from '@/components/Icon.vue'
 import { api } from '@/api'
 import type { Build } from '@/types'
 
 const props = defineProps<{
   build: Build
-  previous: { sha: string; message: string; time: string }
+  previous: { sha: string; message: string; time: string } | null
 }>()
 const emit = defineEmits<{ close: [] }>()
+
+// 模板统一用收窄后的值：previous 为 null 时不渲染对比表，正文回退为通用文案
+const prev = computed(() => props.previous ?? { sha: '—', message: '', time: '' })
 
 const busy = ref(false)
 const done = ref(false)
@@ -44,7 +47,7 @@ async function confirm() {
         <p class="text-[12.5px] text-muted leading-relaxed">
           将把 <span class="font-mono text-ink">web-api</span> 从当前版本
           <span class="font-mono text-danger">{{ build.commitSha }}</span> 回滚到
-          <span class="font-mono text-success">{{ previous.sha }}</span>。
+          <span class="font-mono text-success">{{ prev.sha }}</span>。
           系统会重新部署该版本的镜像，并在部署后执行健康检查。
         </p>
 
@@ -57,10 +60,10 @@ async function confirm() {
           <tbody class="text-muted">
             <tr class="border-t border-divider"><td class="px-2 h-6 text-dim">COMMIT</td>
               <td class="px-2 h-6 text-danger">{{ build.commitSha }}</td>
-              <td class="px-2 h-6 text-success">{{ previous.sha }}</td></tr>
+              <td class="px-2 h-6 text-success">{{ prev.sha }}</td></tr>
             <tr class="border-t border-divider"><td class="px-2 h-6 text-dim">提交标题</td>
               <td class="px-2 h-6 truncate max-w-[150px]">{{ build.commitMessage }}</td>
-              <td class="px-2 h-6 truncate max-w-[150px]">{{ previous.message }}</td></tr>
+              <td class="px-2 h-6 truncate max-w-[150px]">{{ prev.message }}</td></tr>
             <tr class="border-t border-divider"><td class="px-2 h-6 text-dim">状态</td>
               <td class="px-2 h-6">退出码 {{ build.exitCode }} (失败)</td>
               <td class="px-2 h-6">健康检查 200 OK</td></tr>
