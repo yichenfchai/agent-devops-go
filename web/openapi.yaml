@@ -33,12 +33,9 @@ info:
 
     ## 已知契约缺陷（实现前需决策）
 
-    1. **`/builds/{buildNumber}` 的 number 全局不唯一。**
-       数据库约束是 `UNIQUE(project_id, number)`，同一 number 在不同项目下会重复。
-       当前能跑通只因 mock 数据里 `id === number`。
-       建议改为 `/builds/{buildId}`（全局唯一主键），或
-       `/projects/{projectId}/builds/{number}`。本文暂按前端现状写 `{buildNumber}`，
-       并在参数描述里标注风险。
+    1. ~~`/builds/{buildId}` 的 number 全局不唯一。~~ **已决策（M1 契约冻结）**：
+       路径参数为 `{buildId}`（全局唯一主键）。`number` 是项目内自增序号，
+       仅用于 UI 展示（#1091），跳转链接一律携带 id，不再用 number 寻址。
     2. **字段命名不一致。** `Project.created_at` 是 snake_case，
        其余全部 camelCase。建议统一为 camelCase（`createdAt`），
        改前端 `types.ts` 一行即可。本文如实记录现状。
@@ -47,9 +44,8 @@ info:
     4. **时间语义模糊。** `finishedAt: "3 分钟前"`、`queuedAt: "52 秒前"`
        把「展示文案」当成了数据。建议后端返回 ISO 8601 时间戳，
        相对时间由前端计算（否则无法排序、无法本地化、缓存后会过期）。
-    5. **部署详情路径风格不统一。** `GET /deployments/{buildNumber}`
-       与其它构建子资源（`/builds/{n}/stages`）风格不一致，
-       建议统一为 `/builds/{buildNumber}/deployment`。
+    5. ~~部署详情路径风格不统一。~~ **已决策（M1 契约冻结）**：
+       统一为 `GET /builds/{buildId}/deployment`（与 stages/logs/diagnosis 同风格）。
     6. **错误响应体未定义。** `client.ts` 只读 HTTP 状态码与 statusText，
        不解析 body。本文给出建议结构（`Error`），后端可自由实现。
 
@@ -64,6 +60,7 @@ servers:
         description: 部署 devopsd 的主机域名或 IP
 
 security:
+  - cookieAuth: []
   - bearerAuth: []
 
 tags:
@@ -285,9 +282,9 @@ paths:
               schema: { $ref: '#/components/schemas/BuildStats' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
-  /builds/{buildNumber}:
+  /builds/{buildId}:
     parameters:
-      - $ref: '#/components/parameters/BuildNumber'
+      - $ref: '#/components/parameters/BuildId'
     get:
       tags: [builds]
       operationId: getBuild
@@ -305,9 +302,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /builds/{buildNumber}/stages:
+  /builds/{buildId}/stages:
     parameters:
-      - $ref: '#/components/parameters/BuildNumber'
+      - $ref: '#/components/parameters/BuildId'
     get:
       tags: [builds]
       operationId: getBuildStages
@@ -327,9 +324,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /builds/{buildNumber}/logs:
+  /builds/{buildId}/logs:
     parameters:
-      - $ref: '#/components/parameters/BuildNumber'
+      - $ref: '#/components/parameters/BuildId'
     get:
       tags: [builds]
       operationId: getBuildLogs
@@ -356,9 +353,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /builds/{buildNumber}/logs/stream:
+  /builds/{buildId}/logs/stream:
     parameters:
-      - $ref: '#/components/parameters/BuildNumber'
+      - $ref: '#/components/parameters/BuildId'
     get:
       tags: [builds]
       operationId: streamBuildLogs
@@ -389,9 +386,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /builds/{buildNumber}/diagnosis:
+  /builds/{buildId}/diagnosis:
     parameters:
-      - $ref: '#/components/parameters/BuildNumber'
+      - $ref: '#/components/parameters/BuildId'
     get:
       tags: [diagnosis]
       operationId: getDiagnosis
@@ -432,9 +429,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /builds/{buildNumber}/rollback:
+  /builds/{buildId}/rollback:
     parameters:
-      - $ref: '#/components/parameters/BuildNumber'
+      - $ref: '#/components/parameters/BuildId'
     post:
       tags: [deployments]
       operationId: rollbackToBuild
@@ -462,9 +459,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /deployments/{buildNumber}:
+  /builds/{buildId}/deployment:
     parameters:
-      - $ref: '#/components/parameters/BuildNumber'
+      - $ref: '#/components/parameters/BuildId'
     get:
       tags: [deployments]
       operationId: getDeployment
@@ -472,9 +469,7 @@ paths:
       summary: 某次构建的部署详情
       description: |
         部署详情页数据源：部署步骤时间线 + 主机信息 + 版本历史。
-        ⚠️ 路径风格与 `/builds/{n}/...` 不一致（见 info 缺陷 #5），
-        建议后端实现时统一为 `/builds/{buildNumber}/deployment`，
-        前端同步改一行。
+        已决策（缺陷 #5 关闭）：统一挂在 /builds/{buildId} 下，与 stages/logs/diagnosis 同风格。
       responses:
         '200':
           description: 部署对象
@@ -730,11 +725,24 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
 components:
   securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: gp_session
+      description: |
+        **会话鉴权（M1 契约冻结的决策 #1）**：登录成功后由后端下发
+        HttpOnly + Secure + SameSite=Lax 的会话 cookie。
+        选用 cookie 而非 JWT header 的决定性理由：SSE（EventSource）
+        **无法携带自定义 Authorization 头**，cookie 由浏览器自动携带，
+        同时规避了把 token 放进 URL 查询参数的泄漏面。
+        适用于除 /webhooks/* 与 /auth/login 外的全部端点（含 SSE 流）。
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: 除 /webhooks/* 与 /auth/login 外全部端点必需
+      description: |
+        （保留给机器调用方，如 CLI / 脚本；浏览器端一律走 cookieAuth。）
+        除 /webhooks/* 与 /auth/login 外全部端点必需。
 
   parameters:
     ProjectId:
@@ -743,14 +751,14 @@ components:
       required: true
       description: 项目主键（全局唯一）
       schema: { type: integer, minimum: 1 }
-    BuildNumber:
-      name: buildNumber
+    BuildId:
+      name: buildId
       in: path
       required: true
       description: |
-        构建序号（项目内自增，UI 显示 #1091）。
-        ⚠️ 全局不唯一（info 缺陷 #1）：数据库约束是 UNIQUE(project_id, number)。
-        实现时建议改用全局唯一的 build id，或把项目维度放进路径。
+        构建 ID（全局唯一主键，builds.id）。已决策（缺陷 #1 关闭）：
+        路径用全局唯一的 id 而非项目内 number —— number 仅作 UI 展示（#1091），
+        由 Build.number 承载，客户端跳转一律携带 id。
       schema: { type: integer, minimum: 1 }
 
   responses:

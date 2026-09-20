@@ -253,6 +253,18 @@ log_chunks(id, build_id, seq UQ, content BLOB(压缩), byte_size)
 ('queued','running','deploying')`（部分索引，调度器只查活跃构建）、
 `log_chunks(build_id, seq)`（分段拉取）。
 
+**连接初始化 PRAGMA（M1 契约冻结，每个新连接必须执行）**：
+
+```sql
+PRAGMA journal_mode = WAL;      -- 读写不互斥：HTTP 查询与 scheduler 写入/状态迁移并发
+PRAGMA busy_timeout = 5000;     -- 锁冲突等待 5s 而非立刻抛 SQLITE_BUSY
+PRAGMA foreign_keys = ON;       -- SQLite 默认关闭外键强制，必须显式开启
+PRAGMA synchronous = NORMAL;    -- WAL 下的安全与性能平衡点
+```
+
+不开 WAL 的后果：worker 状态迁移写库时，页面任何一个读请求都会撞上
+`SQLITE_BUSY`（默认 busy_timeout=0 直接报错）—— 多 goroutine 场景必现。
+
 ### 3.4 构建状态机
 
 ```

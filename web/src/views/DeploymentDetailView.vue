@@ -10,8 +10,8 @@ import RollbackDialog from '@/components/RollbackDialog.vue'
 import Icon from '@/components/Icon.vue'
 
 const route = useRoute()
-const number = computed(() => Number(route.params.number))
-const { data: dep, loading } = useAsync(() => api.getDeployment(number.value), number)
+const buildId = computed(() => Number(route.params.id))
+const { data: dep, loading } = useAsync(() => api.getDeployment(buildId.value), buildId)
 const rollback = ref(false)
 
 const fmt = (ms: number | null) => (ms === null ? '—' : ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`)
@@ -19,7 +19,7 @@ const fmt = (ms: number | null) => (ms === null ? '—' : ms >= 1000 ? `${(ms / 
 
 <template>
   <div class="max-w-[1200px]">
-    <PageHeader :title="`部署 #${number}`">
+    <PageHeader :title="`部署（构建 id ${buildId}）`">
       <template #actions>
         <button class="btn-outline"><Icon name="refresh" :size="13" />重新部署</button>
       </template>
@@ -96,7 +96,7 @@ const fmt = (ms: number | null) => (ms === null ? '—' : ms >= 1000 ? `${(ms / 
 
     <RollbackDialog
       v-if="rollback && dep"
-      :build="{ id: 1, number: number, commitSha: 'a3f9c21', commitMessage: '修复部署脚本的环境变量读取', exitCode: 1 } as never"
+      :build="{ id: 1, buildId: buildId, commitSha: 'a3f9c21', commitMessage: '修复部署脚本的环境变量读取', exitCode: 1 } as never"
       :previous="(() => {
         const v = dep?.versions.find((x) => !x.tag.includes('a3f9c21'))
         const tag = v?.tag ?? ''

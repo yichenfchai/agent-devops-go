@@ -40,14 +40,14 @@ export const api = {
     return http.get(projectId ? `/projects/${projectId}/builds` : '/builds')
   },
 
-  async getBuild(number: number): Promise<Build> {
+  async getBuild(id: number): Promise<Build> {
     if (USE_MOCK) {
       await delay()
-      const b = mock.builds.find((x) => x.number === number)
-      if (!b) throw new Error(`构建 #${number} 不存在`)
+      const b = mock.builds.find((x) => x.id === id)
+      if (!b) throw new Error(`构建 id=${id} 不存在`)
       return structuredClone(b)
     }
-    return http.get(`/builds/${number}`)
+    return http.get(`/builds/${id}`)
   },
 
   async getBuildStats(): Promise<BuildStats> {
@@ -55,21 +55,21 @@ export const api = {
     return http.get('/builds/stats')
   },
 
-  async getStages(number: number): Promise<Stage[]> {
+  async getStages(id: number): Promise<Stage[]> {
     if (USE_MOCK) {
       await delay()
-      return structuredClone(number === 1092 ? mock.stages1092 : mock.stages1091)
+      return structuredClone(id === 201 ? mock.stages1092 : mock.stages1091)
     }
-    return http.get(`/builds/${number}/stages`)
+    return http.get(`/builds/${id}/stages`)
   },
 
-  async getLogs(number: number): Promise<LogLine[]> {
+  async getLogs(id: number): Promise<LogLine[]> {
     if (USE_MOCK) {
       await delay()
-      // 不同构建号的日志各不相同 —— 运行中的构建不能显示上一次失败的日志
-      return structuredClone(number === 1092 ? mock.runningLog1092 : mock.failLog1091)
+      // 不同构建的日志各不相同 —— 运行中的构建不能显示上一次失败的日志
+      return structuredClone(id === 201 ? mock.runningLog1092 : mock.failLog1091)
     }
-    return http.get(`/builds/${number}/logs`)
+    return http.get(`/builds/${id}/logs`)
   },
 
   async triggerBuild(projectId: number): Promise<{ number: number }> {
@@ -77,9 +77,9 @@ export const api = {
     return http.post(`/projects/${projectId}/builds`)
   },
 
-  async rollbackTo(buildNumber: number): Promise<void> {
+  async rollbackTo(buildId: number): Promise<void> {
     if (USE_MOCK) { await delay(400); return }
-    return http.post(`/builds/${buildNumber}/rollback`)
+    return http.post(`/builds/${buildId}/rollback`)
   },
 
   async listHosts(): Promise<DeployHost[]> {
@@ -92,9 +92,9 @@ export const api = {
     return http.post(`/hosts/${id}/test`)
   },
 
-  async getDeployment(buildNumber: number): Promise<Deployment> {
+  async getDeployment(buildId: number): Promise<Deployment> {
     if (USE_MOCK) { await delay(); return structuredClone(mock.deployments[0]) }
-    return http.get(`/deployments/${buildNumber}`)
+    return http.get(`/builds/${buildId}/deployment`)
   },
 
   async listSecrets(): Promise<Secret[]> {
@@ -112,9 +112,9 @@ export const api = {
     return http.get('/runner')
   },
 
-  async getDiagnosis(buildNumber: number): Promise<Diagnosis> {
+  async getDiagnosis(buildId: number): Promise<Diagnosis> {
     if (USE_MOCK) { await delay(260); return structuredClone(mock.diagnosis1091) }
-    return http.get(`/builds/${buildNumber}/diagnosis`)
+    return http.get(`/builds/${buildId}/diagnosis`)
   },
 }
 

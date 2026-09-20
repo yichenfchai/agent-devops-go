@@ -143,26 +143,28 @@ export const diagnosis1091 = {
 }
 
 export const builds: Build[] = [
-  { id: 1092, projectId: 1, number: 1092, state: 'running', trigger: 'push', ref: 'main',
+  // 缺陷 #1 决策后的真实数据形态：id 全局唯一连续；number 项目内自增（跨项目可重复）。
+  // mock 不再 id===number，前端不得用 number 寻址 —— api 层按 id 取，UI 显示 #number。
+  { id: 201, projectId: 1, number: 1092, state: 'running', trigger: 'push', ref: 'main',
     commitSha: 'c8f921d', commitMessage: '添加 JWT Token 刷新处理器', commitAuthor: 'Alex Mercer',
     baseImage: 'node:20-alpine', imageTag: null, exitCode: null,
     queuedAt: '52 秒前', startedAt: '52 秒前', finishedAt: null, durationMs: null, diagnosis: null },
-  { id: 1091, projectId: 1, number: 1091, state: 'failed', trigger: 'push', ref: 'main',
+  { id: 200, projectId: 1, number: 1091, state: 'failed', trigger: 'push', ref: 'main',
     commitSha: 'a3f9c21', commitMessage: '修复部署脚本的环境变量读取', commitAuthor: 'M. Alvarez',
     baseImage: 'node:20-alpine', imageTag: null, exitCode: 1,
     queuedAt: '10 分钟前', startedAt: '10 分钟前', finishedAt: '9 分钟前',
     durationMs: BUILD_1091_DURATION_MS, diagnosis: diagnosis1091 },
-  { id: 1090, projectId: 1, number: 1090, state: 'deployed', trigger: 'manual', ref: 'main',
+  { id: 199, projectId: 1, number: 1090, state: 'deployed', trigger: 'manual', ref: 'main',
     commitSha: '7b1e044', commitMessage: '优化数据库查询索引', commitAuthor: 'admin',
     baseImage: 'node:20-alpine', imageTag: 'web-api:7b1e044', exitCode: 0,
     queuedAt: '2 小时前', startedAt: '2 小时前', finishedAt: '2 小时前',
     durationMs: 134_000, diagnosis: null },
-  { id: 1089, projectId: 2, number: 1089, state: 'failed', trigger: 'push', ref: 'main',
+  { id: 187, projectId: 2, number: 1091, state: 'failed', trigger: 'push', ref: 'main',
     commitSha: 'f2e811b', commitMessage: '重构仪表盘图表组件', commitAuthor: 'M. Alvarez',
     baseImage: 'node:20-alpine', imageTag: null, exitCode: 1,
     queuedAt: '5 小时前', startedAt: '5 小时前', finishedAt: '5 小时前',
     durationMs: 21_000, diagnosis: null },
-  { id: 1088, projectId: 3, number: 1088, state: 'deployed', trigger: 'push', ref: 'main',
+  { id: 172, projectId: 3, number: 1088, state: 'deployed', trigger: 'push', ref: 'main',
     commitSha: '91c4d2e', commitMessage: '更新 API 参考文档', commitAuthor: 'L. Chen',
     baseImage: 'node:20-alpine', imageTag: 'docs-site:91c4d2e', exitCode: 0,
     queuedAt: '昨天', startedAt: '昨天', finishedAt: '昨天',
@@ -171,7 +173,7 @@ export const builds: Build[] = [
 
 export const deployments: Deployment[] = [
   {
-    id: 1, buildId: 1090, projectName: 'web-api', imageTag: 'web-api:a3f9c21',
+    id: 1, buildId: 199, projectName: 'web-api', imageTag: 'web-api:a3f9c21',
     hostAddr: 'deploy@10.0.0.8', workDir: '/srv/web-api', state: 'deployed',
     startedAt: '10:25:04', durationMs: 19_500,
     steps: [

@@ -8,12 +8,12 @@ import SkeletonRows from '@/components/ui/SkeletonRows.vue'
 import Icon from '@/components/Icon.vue'
 
 const route = useRoute()
-const number = computed(() => Number(route.params.number))
+const buildId = computed(() => Number(route.params.id))
 
-const { data: build } = useAsync(() => api.getBuild(number.value), number)
-const { data: logs } = useAsync(() => api.getLogs(number.value), number)
+const { data: build } = useAsync(() => api.getBuild(buildId.value), buildId)
+const { data: logs } = useAsync(() => api.getLogs(buildId.value), buildId)
 const { data: diag, loading: diagLoading, error: diagError, reload } =
-  useAsync(() => api.getDiagnosis(number.value), number)
+  useAsync(() => api.getDiagnosis(buildId.value), buildId)
 
 const helpful = ref(false)
 </script>
@@ -24,7 +24,7 @@ const helpful = ref(false)
     <div class="panel border-danger/45 bg-danger/5 p-3.5 flex flex-wrap items-center gap-3">
       <span class="flex items-center gap-2 text-danger">
         <Icon name="x" :size="16" />
-        <span class="text-[15px] font-semibold">构建 #{{ number }} 失败 · 退出码 {{ build?.exitCode ?? 1 }}</span>
+        <span class="text-[15px] font-semibold">构建 #{{ build?.number ?? buildId }} 失败 · 退出码 {{ build?.exitCode ?? 1 }}</span>
       </span>
       <span class="text-[12px] text-muted">执行阶段发生类型检查异常，作业管道已终止。</span>
       <div class="flex-1" />

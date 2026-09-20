@@ -21,9 +21,17 @@ describe('mock 数据跨页一致性', () => {
     expect(dumped).not.toContain('local-executor-0')
   })
 
-  it('构建号唯一', () => {
-    const nums = mock.builds.map((b) => b.number)
-    expect(new Set(nums).size).toBe(nums.length)
+  it('构建 id 全局唯一；number 仅项目内唯一（缺陷 #1 决策后的契约）', () => {
+    const ids = mock.builds.map((b) => b.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    // 同一项目内 number 不重复（项目内自增序号）
+    const byProject = new Map<number, number[]>()
+    for (const b of mock.builds) {
+      byProject.set(b.projectId, [...(byProject.get(b.projectId) ?? []), b.number])
+    }
+    for (const nums of byProject.values()) {
+      expect(new Set(nums).size).toBe(nums.length)
+    }
   })
 
   it('项目引用的部署目标真实存在', () => {

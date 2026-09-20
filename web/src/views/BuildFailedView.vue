@@ -9,11 +9,11 @@ import SkeletonRows from '@/components/ui/SkeletonRows.vue'
 import Icon from '@/components/Icon.vue'
 
 const route = useRoute()
-const number = computed(() => Number(route.params.number))
+const buildId = computed(() => Number(route.params.id))
 
-const { data: build, loading } = useAsync(() => api.getBuild(number.value), number)
-const { data: stages } = useAsync(() => api.getStages(number.value), number)
-const { data: logs } = useAsync(() => api.getLogs(number.value), number)
+const { data: build, loading } = useAsync(() => api.getBuild(buildId.value), buildId)
+const { data: stages } = useAsync(() => api.getStages(buildId.value), buildId)
+const { data: logs } = useAsync(() => api.getLogs(buildId.value), buildId)
 
 const fmt = (ms: number | null) => (ms === null ? '—' : `${(ms / 1000).toFixed(1)}s`)
 </script>
@@ -24,7 +24,7 @@ const fmt = (ms: number | null) => (ms === null ? '—' : `${(ms / 1000).toFixed
     <div class="panel border-danger/45 bg-danger/5 p-3.5 flex flex-wrap items-center gap-4">
       <span class="flex items-center gap-2 text-danger">
         <Icon name="x" :size="16" />
-        <span class="text-[15px] font-semibold">构建 #{{ number }} 失败</span>
+        <span class="text-[15px] font-semibold">构建 #{{ build?.number ?? buildId }} 失败</span>
       </span>
       <span class="chip border bg-danger/15 border-danger/35 text-[#e55353]">
         exit code {{ build?.exitCode ?? 1 }}
@@ -78,7 +78,7 @@ const fmt = (ms: number | null) => (ms === null ? '—' : `${(ms / 1000).toFixed
           <span>Docker 运行时隔离环境 · 基础镜像 node:20-alpine</span>
           <span>exit: {{ build?.exitCode ?? 1 }} (ELIFECYCLE)</span>
           <div class="flex-1" />
-          <RouterLink :to="`/builds/${number}/diagnosis`" class="btn-ghost text-ai">
+          <RouterLink :to="`/builds/${buildId}/diagnosis`" class="btn-ghost text-ai">
             <Icon name="sparkle" :size="12" />查看 AI 诊断
           </RouterLink>
         </div>

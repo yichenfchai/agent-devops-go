@@ -320,9 +320,9 @@ type Build struct {
 前端 TypeScript 类型是 `string | null`，`undefined` 和 `null` 语义不同，
 且 167 个测试里有多处断言依赖字段存在。
 
-### SSE 协议（`GET /builds/{n}/logs/stream`）
+### SSE 协议（`GET /builds/{buildId}/logs/stream`）
 
-前端用原生 `EventSource`，协议必须严格是：
+前端用原生 `EventSource`（**无法带 Authorization 头 → 鉴权走会话 cookie，见 §5 决策**），协议必须严格是：
 
 ```
 data: {"seq":41,"ts":"10:24:32","text":"...","level":"error"}\n\n
@@ -379,22 +379,29 @@ a3f9c21、28140ms、build-runner-01……）。**联调时让后端返回与 moc
 
 ---
 
-## 5. 已知契约缺陷 —— 动工前先决策（M1 第一项任务）
+## 5. 契约缺陷决策记录 —— 1/3/5 已冻结（M1 第一项任务，部分完成）
 
 这些是前端快速迭代留下的债，openapi.yaml 的 `info.description` 里有同样清单。
 **先改契约再写实现**，否则会把缺陷固化进数据库：
 
-| # | 缺陷 | 建议决策 | 影响面 |
-|---|------|---------|--------|
-| 1 | `/builds/{buildNumber}`：number 仅项目内唯一，全局会撞 | 改用全局唯一 build id，或路径带项目 `/projects/{pid}/builds/{n}` | 前端 router + api 约 6 处，半小时改完 |
-| 2 | `Project.created_at` 是唯一 snake_case | 统一 `createdAt` | types.ts 1 行 + mock 1 行 |
-| 3 | secrets 前端调全局 `/secrets`，库里是项目级 | 改 `/projects/{pid}/secrets` | 前端 api 2 个方法 |
-| 4 | 时间字段是人类文案（"3 分钟前"）非 ISO 8601 | 后端返回 ISO/epoch，相对时间前端算 | **最大的一条**：前端需要加一个 timeAgo 工具函数 + 各视图小改；不做的话无法排序/缓存过期 |
-| 5 | `/deployments/{buildNumber}` 风格不一致 | 改 `/builds/{n}/deployment` | 前端 1 行 |
-| 6 | 错误响应体未定义 | 采用 openapi 里的 `Error` schema（`{error, code}`） | 前端 client.ts 顺手解析 body 展示 |
+| # | 缺陷 | 决策 | 状态 |
+|---|------|------|------|
+| 1 | `/builds/{buildNumber}`：number 仅项目内唯一，全局会撞 | **路径一律用全局唯一 `{buildId}`**；number 仅 UI 展示（#1091），mock 已改为真实形态（id:200/number:1091），前端 router/api/视图已全部切到 id 寻址，169 测试绿 | ✅ **已冻结（2026-09-20）** |
+| 2 | `Project.created_at` 是唯一 snake_case | 统一 `createdAt` | ⬜ 待决策（types.ts 1 行 + mock 1 行，建议随 #4 一起做）|
+| 3 | secrets 前端调全局 `/secrets`，库里是项目级 | 改 `/projects/{pid}/secrets` | ⬜ 待决策（前端 api 2 个方法）|
+| 4 | 时间字段是人类文案（"3 分钟前"）非 ISO 8601 | 后端返回 ISO/epoch，相对时间前端算（需要 timeAgo 工具函数） | ⬜ 待决策（**最大的一条**，不阻塞你写 Go，但建议 M3 前定）|
+| 5 | `/deployments/{buildId}` 风格不一致 | **统一为 `/builds/{buildId}/deployment`**，前端 api 已改 | ✅ **已冻结（2026-09-20）** |
+| 6 | 错误响应体未定义 | 采用 openapi 里的 `Error` schema（`{error, code}`） | ⬜ 待决策（client.ts 顺手解析）|
+
+**附加决策 —— 鉴权方案（2026-09-20 冻结）**：浏览器端走 **HttpOnly 会话 cookie**
+（`gp_session`，Secure + SameSite=Lax），决定性理由是 SSE 的 `EventSource`
+**无法携带 Authorization 头**，cookie 是唯一不用把 token 放进 URL 的方案；
+`bearerAuth`（JWT）保留给 CLI/脚本类机器调用方，与 cookie OR 并列
+（openapi 全局 security 已是 `- cookieAuth: []` / `- bearerAuth: []`）。
+webhook 端点仍走 HMAC 验签，不走这两者。
 
 决策完 → 改 openapi.yaml → 改 types.ts / api/index.ts → 跑 `npm run test:run`
-（测试会告诉你哪些断言要跟着改）→ 再开始写 Go。**契约冻结后不再改。**
+（测试会告诉你哪些断言要跟着改）→ 再开始写 Go。**已冻结项不再改。**
 
 其它已知技术债（不阻塞后端，见 TODO.md）：前端项目 id 硬编码为 1；
 `Secret.isSecret=false` 时缺 `displayValue` 字段（mock 硬编码了 'production'）。
@@ -545,8 +552,8 @@ start visual/deploy-modes.html   # ★三形态架构对照（接口层/profile/
 ## 9. 联系方式与边界
 
 - **不要改**：`web/src/components/`、`web/src/views/` 的视觉与文案
-  （与 Stitch 设计稿对齐过、经过逐屏视觉核验；契约缺陷 #1–#6 涉及的
-  types.ts / api/index.ts / router.ts 修改除外，且改完必须 167 测试全绿）
+  （与 Stitch 设计稿对齐过、经过逐屏视觉核验；契约缺陷涉及的
+  types.ts / api/index.ts / router.ts / mock.ts 修改除外，且改完必须全量测试绿）
 - **不要引入**：Redis、消息队列、K8s client、ORM（理由见 DEPENDENCIES.md「不引入清单」）
 - **拿不准就查**：ARCHITECTURE.md（设计全貌）、DEPENDENCIES.md（选型理由）、
   TODO.md（任务分解）、openapi.yaml info.description（契约缺陷）

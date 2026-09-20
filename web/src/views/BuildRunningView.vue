@@ -12,16 +12,16 @@ import Icon from '@/components/Icon.vue'
 import type { Build } from '@/types'
 
 const route = useRoute()
-const number = computed(() => Number(route.params.number))
+const buildId = computed(() => Number(route.params.id))
 
-const { data: build } = useAsync<Build>(() => api.getBuild(number.value), number)
-const { data: stages, reload: reloadStages } = useAsync(() => api.getStages(number.value), number)
+const { data: build } = useAsync<Build>(() => api.getBuild(buildId.value), buildId)
+const { data: stages, reload: reloadStages } = useAsync(() => api.getStages(buildId.value), buildId)
 
 const elapsed = ref(52.1)
 const live = ref(true)
 
 // 实时日志：真实模式走 SSE，mock 模式逐行回放
-const { lines, connected, start } = useLogStream(number.value)
+const { lines, connected, start } = useLogStream(buildId.value)
 onMounted(start)
 
 // 运行中每 3 秒刷新阶段与耗时
@@ -41,7 +41,7 @@ const pipeline = 'npm ci → npm run build → docker build -t web-api:${SHA} �
     <div class="panel p-3.5 mb-4 flex flex-wrap items-center gap-4">
       <div class="flex items-center gap-2">
         <StatusBadge :state="build?.state ?? 'running'" />
-        <span class="text-[15px] font-semibold">#{{ number }}</span>
+        <span class="text-[15px] font-semibold">#{{ build?.number ?? buildId }}</span>
       </div>
       <div class="flex flex-col">
         <span class="text-2xs text-dim uppercase tracking-wider">执行时长</span>
