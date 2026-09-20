@@ -100,34 +100,41 @@ CSS           22.4 kB（gzip 5.0 kB）—— Tailwind 只产出生成页用到�
 | `github.com/moby/moby/api` | (随 SDK) | 容器类型定义 | SDK 依赖 |
 | `github.com/docker/go-connections` | (随 SDK) | 端口/挂载配置类型 | SDK 依赖 |
 
-### 2.4 部署执行层
+### 2.4 触发层（三形态，§ARCHITECTURE 3.8）
+
+| 包 | 版本 | 作用 | 选型说明 |
+|----|------|------|----------|
+| `github.com/fsnotify/fsnotify` | v1.7+ | 形态Ⅰ LocalWatchTrigger：监视本地仓库 `.git/HEAD` 与 `refs/heads/*` | 跨平台文件监视事实标准（Windows ReadDirectoryChangesW / Linux inotify / macOS FSEvents），k8s、Hugo 等项目同款。**只监视 `.git/` 不监视工作区**（否则每次保存都触发）；防抖 2s + 5s 轮询 `git rev-parse HEAD` 兜底（实测 77ms/次）。备选「纯轮询」更简单但延迟高，作 spike 失败时的回退（TODO M1） |
+| （webhook / manual 触发） | — | 形态Ⅱ/Ⅲ 与手动触发 | 无新依赖：webhook 走 chi 路由 + 标准库 `crypto/hmac` 验签；manual 是一个 POST 端点 |
+
+### 2.5 部署执行层
 
 | 包 | 版本 | 作用 | 选型说明 |
 |----|------|------|----------|
 | `golang.org/x/crypto/ssh` | latest | SSH 客户端 | golang.org/x 官方维护。三件硬要求写进代码：HostKeyCallback 必须校验（`ssh.FixedHostKey`，防中间人）、私钥解密后才进内存、连接 15s 超时 |
-| `github.com/pkg/sftp` | ❌ 不用 | SFTP | 产物走 registry tag / tar + compose 拉取，不需要 SFTP 通道 |
+| `github.com/pkg/sftp` | ❌ 不用 | SFTP | 形态Ⅲ镜像传输走 `docker save \| ssh docker load`（一条 SSH 管道流式传输，无需私有 registry），不需要 SFTP 通道 |
 
-### 2.5 LLM 诊断层
+### 2.6 LLM 诊断层
 
 | 包 | 版本 | 作用 | 选型说明 |
 |----|------|------|----------|
 | （无第三方包） | — | OpenAI 兼容客户端 | **标准库 `net/http` + `encoding/json` 手写**：协议就是一个 POST `/chat/completions`，引 openai-go 反而把协议细节藏进抽象层；且要同时兼容 OpenAI/vLLM/Ollama 三种 base_url，手写 80 行最透明。超时 90s、退避重试 ×2、上下文裁剪、脱敏都在自己代码里可见 |
 
-### 2.6 可观测性
+### 2.7 可观测性
 
 | 包 | 版本 | 作用 | 选型说明 |
 |----|------|------|----------|
 | `log/slog` | 标准库（Go 1.21+） | 结构化日志 | 标准库，零依赖；JSON handler 供采集，text handler 供开发 |
 | `github.com/prometheus/client_golang` | latest | 指标 | 构建并发数、队列深度、P95 排队延迟、goroutine 数——论文压测章节的数据来源。M2 就接上，不要等 M6 补数据 |
 
-### 2.7 工程配套
+### 2.8 工程配套
 
 | 包 | 作用 |
 |----|------|
 | `golangci-lint`（CLI，非依赖） | 聚合 linter；CI 里 `go vet` + `golangci-lint run` 双闸 |
 | `go test -race`（内置） | 竞态检测——并发正确性的最终裁判，所有测试命令默认带 |
 
-### 2.8 后端「不引入」清单
+### 2.9 后端「不引入」清单
 
 | 刻意不用 | 理由 |
 |----------|------|
