@@ -1,7 +1,7 @@
 # GoPulse CI — 架构设计文档
 
-> 面向小型团队的轻量 CI/CD 工具。Go 后端 + Vue 3 前端，单二进制交付，一台 VPS 即可运行全流程：
-> push → 自动构建（Docker 隔离）→ SSH 部署 → 健康检查 → 失败自动回滚 → LLM 智能诊断。
+> 面向小型团队的轻量 CI/CD 工具。Go 后端 + Vue 3 前端，单二进制交付，一台机器（笔记本或服务器）即可运行全流程：
+> commit/push → 自动构建（Docker 隔离）→ 部署（本机 compose / SSH 远程）→ 健康检查 → 失败自动回滚 → LLM 智能诊断。
 
 ---
 
@@ -18,6 +18,7 @@
 | **诊断证据链**（结构化断言 + 日志行号锚点） | ⬜ 规划中（需前端配合改造，见 §7） |
 | **人工反馈闭环与知识库**（验证计数 → LOA 演进） | ⬜ 规划中（需前端配合改造） |
 | **全自动托管模式**（无人值守自动修复） | ⬜ 规划中（需前端配合改造） |
+| **三种部署形态**（Ⅰ 个人开发者版 / Ⅱ 简易团队版 / Ⅲ 完整团队版，§3.8/§7） | ✅ 设计完成（`visual/deploy-modes.html` 交互式对照）；**三形态均为交付物**：M1–M4 按 Ⅰ→Ⅱ→Ⅲ 实现，M4 末全部可用并各自通过 E2E 验收 |
 
 ---
 
@@ -26,22 +27,23 @@
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                         用户 / 开发者                                  │
-│            git push                浏览器访问 Web 控制台                │
+│      git commit / push             浏览器访问 Web 控制台                │
 └────────┬──────────────────────────────┬────────────────────────────────┘
          │                              │ HTTP / SSE
          ▼                              ▼
-┌─────────────────┐            ┌─────────────────────────────────────────┐
-│  代码托管平台    │            │           Web 前端（Vue 3 SPA）          │
-│  GitHub / GitLab│            │  项目 · 构建 · 部署 · 密钥 · 设置        │
-└────────┬────────┘            │  实时日志（EventSource）                 │
-         │ webhook             └────────────────┬────────────────────────┘
-         │                                      │ /api/*（vite 代理 → :8080）
-         ▼                                      ▼
+┌──────────────────────┐     ┌─────────────────────────────────────────┐
+│ 触发源（三形态 §3.8）  │     │           Web 前端（Vue 3 SPA）          │
+│ Ⅰ 本地 .git/ 监视     │     │  项目 · 构建 · 部署 · 密钥 · 设置        │
+│ ⅡⅢ GitHub/GitLab     │     │  实时日志（EventSource）                 │
+│    webhook            │     └────────────────┬────────────────────────┘
+│ 手动触发（三形态共有） │                      │ /api/*（vite 代理 → :8080）
+└─────────┬────────────┘                      ▼
+          │ BuildRequest（幂等入队）
 ┌────────────────────────────────────────────────────────────────────────┐
 │                     Go 后端（单二进制 devopsd，:8080）                   │
 │                                                                        │
 │  ┌──────────────  Access 层 ──────────────┐                            │
-│  │ Webhook Handler │ REST API │ Auth/RBAC │  验签 → 立即入队 → 202   │
+│  │ Trigger 入口(验签/监视) │ REST API │ Auth │ 幂等入队 → 202      │
 │  └───────┬─────────────────┬─────────────┘                            │
 │          ▼                 ▼                                           │
 │  ┌──────────────  Core 层 ───────────────┐                            │
@@ -49,7 +51,7 @@
 │  │ State Machine（迁移校验·事件审计）      │                            │
 │  │ Worker Pool（semaphore 限流 × N）       │                            │
 │  │   ├─ Builder（Docker 隔离构建）         │                            │
-│  │   ├─ Deployer（SSH + compose + 健康检查）│                           │
+│  │   ├─ Deployer（local compose / SSH 远程）│                           │
 │  │   ├─ Diagnoser（LLM 异步诊断）          │                            │
 │  │   └─ Log Pipe（ring buffer → SSE）      │                            │
 │  └───────┬─────────────────┬─────────────┘                            │
@@ -69,7 +71,7 @@
 │                              ▼                                        │
 │  ┌────── Storage ──────┐  ┌──── External（全部接口化）────┐            │
 │  │ SQLite（modernc）    │  │ Docker daemon（构建容器）      │           │
-│  │ 8 张表，AES-GCM 加密 │  │ 目标主机（SSH/compose）        │           │
+│  │ 14 张表(8基础+6LOA)  │  │ 部署目标（local compose / SSH）│           │
 │  │ 日志分块 / 产物目录  │  │ LLM API（OpenAI 兼容协议）     │           │
 │  └─────────────────────┘  └────────────────────────────────┘           │
 └────────────────────────────────────────────────────────────────────────┘
@@ -78,13 +80,18 @@
 ### 1.1 一次完整构建的生命周期
 
 ```
-push ──▶ webhook 验签(HMAC) ──▶ 原子入队(202) ──▶ Scheduler 认领
+触发源（三选一，§3.8）：
+  Ⅰ 本地仓库  fsnotify 监视 .git/HEAD·refs/heads/*（防抖2s）+ 轮询兜底 5s
+  ⅡⅢ webhook  HMAC 验签 → 立即 202          手动：UI 按钮（三形态恒有）
+      ──▶ (repo, sha, ref) 幂等入队 ──▶ Scheduler 原子认领
       ──▶ 项目类型检测(node/go/python…) ──▶ 生成 Pipeline 快照
-      ──▶ Go 侧检出代码（按 commit_sha 浅克隆，凭据不进容器，详见 §3.7）
+      ──▶ Go 侧检出代码（Ⅰ git archive <sha> 零凭据 / ⅡⅢ fetch --depth=1 <sha>
+           凭据不进容器，详见 §3.7–§3.8）
       ──▶ Docker 容器内执行（install → build，只读挂载已检出代码）
       ──▶ 日志经 Log Pipe 实时推送到浏览器（SSE）
-      ──▶ 产物：docker commit → image tag
-      ──▶ SSH 部署：compose up -d ──▶ 健康检查 × N
+      ──▶ 产物：docker commit → image tag（= commit SHA，不可变）
+      ──▶ 部署（Ⅰ/Ⅱ 本机 compose up -d / Ⅲ save|ssh load → 远程 compose）
+      ──▶ 健康检查 × N
       ├── 通过 → deployed（保留最近 K 个版本）
       └── 失败 ──▶ ★LOA 决策点★
             │  Analyzer 匹配失败类型 → Policy Resolver 查自动化级别
@@ -160,22 +167,36 @@ src/
 
 ```
 devopsd/                            module: github.com/you/devopsd
-├── cmd/devopsd/main.go             装配依赖、启动、优雅关闭
+├── cmd/devopsd/main.go             装配依赖（★全系统唯一形态分支点，§3.8）、启动、优雅关闭
 ├── internal/
-│   ├── config/                     YAML 配置 + 环境变量密钥
-│   ├── httpapi/                    chi 路由：webhook / REST / SSE / auth
+│   ├── core/                       ★ ports.go：TriggerSource / CheckoutStrategy / DeployTarget
+│   │                                 三接口定义；核心只依赖接口，不知道形态存在（§3.8）
+│   ├── config/                     YAML 配置（profile 预设 personal/team-lite/team-full）+ 环境变量密钥
+│   ├── httpapi/                    chi 路由：trigger 入口 / REST / SSE / auth
 │   ├── scheduler/                  queue.go · pool.go · lifecycle.go
 │   ├── build/                      state.go · executor.go · detect.go · pipeline.go
-│   ├── deploy/                     deployer.go · sshrunner.go · health.go · rollback.go
+│   ├── deploy/                     deployer.go · health.go · rollback.go
 │   ├── logpipe/                    pipe.go · ring.go · sink.go
 │   ├── diagnose/                   llm.go · prompt.go · truncate.go · redact.go
 │   ├── store/                      migrations/ · queries.sql（sqlc）
 │   ├── crypto/                     AES-GCM 封装，主密钥只从环境变量读
 │   ├── platform/                   dockerx / sshx / llmx —— 接口抽象，单测打桩
-│   └── vcs/                        GitHub / GitLab webhook 解析 + checkout.go 代码检出（§3.7）
+│   ├── vcs/                        GitHub / GitLab webhook 解析（§3.7）
+│   └── adapters/                   ★ 三接口的全部实现（形态差异收敛于此，§3.8）
+│       ├── localwatch/             fsnotify 监视本地 .git/ + 轮询兜底（形态Ⅰ）
+│       ├── webhook/                HMAC 验签 + 事件归一化 + 幂等入队（形态Ⅱ/Ⅲ）
+│       ├── manual/                 UI 手动触发（三形态恒有）
+│       ├── gitarchive/             git archive <sha> 本地检出，零凭据（形态Ⅰ）
+│       ├── gitfetch/               fetch --depth=1 <sha> + 凭据注入（形态Ⅱ/Ⅲ，§3.7）
+│       ├── composelocal/           本机 docker compose 部署（形态Ⅰ/Ⅱ）
+│       └── sshremote/              save|ssh load + FixedHostKey 远程部署（形态Ⅲ）
 ├── pkg/api/types.go                与前端 src/types.ts 对应
 └── web/                            上面第 2 节的前端（构建产物由 go:embed 内嵌）
 ```
+
+依赖方向（编译期强制）：`cmd → core ← adapters`。core 禁止 import 任何 adapter，
+adapter 之间禁止互相 import（local-watch 不知道 webhook 的存在）。
+新增第 4 种形态 = 新增一个 adapter + 一份 profile，core 与前端零改动。
 
 ### 3.2 核心数据流与并发模型
 
@@ -188,7 +209,8 @@ main
  │         ├── Log Reader     容器 stdout → LogPipe（逐行时间戳）
  │         ├── Log Writer     批量落库（200 行或 2s flush）
  │         └── Diagnoser      失败时异步调 LLM，不阻塞状态流转
- ├── HTTP goroutines          ×M   每请求一个；webhook 只入队即回 202
+ ├── Trigger goroutines       ×3   每 TriggerSource 一个（local-watch/webhook/manual，按 profile 装配）
+ ├── HTTP goroutines          ×M   每请求一个；trigger 入口只入队即回 202
  ├── Reconciler               ×1   孤儿构建恢复 / 超时清理 / 旧产物 GC
  └── signal handler           ×1   SIGTERM → 停止取新任务 → 宽限期 drain
 ```
@@ -205,9 +227,13 @@ main
 
 ```
 users(id, email, password_hash, role, created_at)
-deploy_hosts(id, name, addr, ssh_user, ssh_key_enc, ssh_host_key,
+deploy_hosts(id, name, kind,               -- kind: local | ssh（形态Ⅰ/Ⅱ 为 local，addr=127.0.0.1）
+             addr, ssh_user, ssh_key_enc, ssh_host_key,   -- ssh 类才用，local 类为 NULL
              work_dir, compose_file, health_check_url, health_retries, keep_versions)
-projects(id, owner_id→users, name, repo_provider, repo_full_name UQ,
+projects(id, owner_id→users, name,
+         source_kind,                      -- local-repo | github | gitlab（§3.8 触发与检出的选择依据）
+         repo_path,                        -- local-repo：本机仓库路径（形态Ⅰ）
+         repo_provider, repo_full_name UQ, -- 远程仓库（形态Ⅱ/Ⅲ）
          default_branch, webhook_secret_enc, detected_type, pipeline_yaml,
          git_auth_type, git_credential_enc,   -- 代码检出凭据，AES-GCM，独立于 secrets（§3.7）
          deploy_host_id→deploy_hosts, build_timeout_s, auto_rollback)
@@ -244,7 +270,7 @@ queued ─▶ running ─▶ succeeded ─▶ deploying ─▶ deployed
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/webhooks/{github\|gitlab}` | 验签 → 入队 → 202（无需登录） |
+| POST | `/api/webhooks/{github\|gitlab}` | 验签 → 入队 → 202（无需登录；仅形态Ⅱ/Ⅲ装配此路由，§3.8） |
 | GET/POST | `/api/projects` | 列表（含 lastBuild）/ 创建 |
 | PATCH/DELETE | `/api/projects/{id}` | 配置 / 删除 |
 | POST | `/api/projects/{id}/builds` | 手动触发 |
@@ -272,6 +298,15 @@ queued ─▶ running ─▶ succeeded ─▶ deploying ─▶ deployed
 ### 3.7 代码检出与 Git 凭据管理
 
 这是后端 M2 的实现前提，也是安全上最易出错的一环。核心原则：**检出由 Go 进程在容器外完成，凭据绝不进入构建容器**。
+
+检出有两种策略，对应 §3.8 的 `CheckoutStrategy` 接口：
+
+| 策略 | 适用形态 | 凭据 | 命令 |
+|------|---------|------|------|
+| `git-archive` | Ⅰ（本地仓库） | **零凭据** —— 本地磁盘读取无认证 | `git archive <sha> \| tar -x`（实测：精确导出任意历史 SHA，产物不含 `.git`） |
+| `git-fetch` | Ⅱ/Ⅲ（远程仓库） | 需要，见下文 (2)–(5) | `git fetch --depth=1 origin <sha>` + `checkout` |
+
+以下 (1)–(7) 主要针对 `git-fetch`；`git-archive` 是其严格子集（少了凭据与网络两个风险面）。
 
 **（1）检出位置：Go 侧 clone，再把代码只读挂进构建容器**
 
@@ -306,7 +341,9 @@ projects 表新增三列：
 
 **（4）检出流程：精确到 commit，浅克隆**
 
-webhook 携带 `commit_sha`，必须检出**该 SHA**而非 `ref` 的最新提交（否则 ref 已前进时构建的不是触发那次提交，破坏可复现性）：
+触发事件（webhook 或本地监视）都携带 `commit_sha`，必须检出**该 SHA**而非 `ref` 的最新提交（否则 ref 已前进时构建的不是触发那次提交，破坏可复现性）：
+
+形态Ⅱ/Ⅲ（`git-fetch`，远程仓库）：
 
 ```bash
 git init -q <workdir>
@@ -314,6 +351,13 @@ git -C <workdir> remote add origin <clone_url>          # URL 中不含凭据
 # 凭据经环境变量注入临时 git 配置（见下），不进命令行参数、不进 URL
 git -C <workdir> fetch -q --depth=1 origin <commit_sha>  # 按 SHA 浅取单个提交
 git -C <workdir> checkout -q FETCH_HEAD
+```
+
+形态Ⅰ（`git-archive`，本地仓库）—— 无需 init/fetch/凭据，一条管道导出快照：
+
+```bash
+# 直接对用户的本地仓库执行，产物是纯净工作树（不含 .git），适合只读挂载进容器
+git -C <repo_path> archive --format=tar <commit_sha> | tar -x -C <workdir>
 ```
 
 - `--depth=1` 只取一个提交，省时省盘，契合轻量定位
@@ -356,8 +400,67 @@ GIT_TERMINAL_PROMPT=0   # 禁止交互式提示（防卡死 + 防凭据回显）
 | 凭据不进 secrets 表 | 走 `projects.git_credential_enc` 专用列，取用路径与构建 secrets 隔离 |
 | 凭据不进 URL/参数/日志 | 环境变量式 `GIT_CONFIG_*` 注入；fetch `-q`；token 纳入 redact |
 | 最小权限 | 单仓库只读（fine-grained PAT / Deploy Token / deploy key） |
-| 可复现 | 精确检出 webhook 的 `commit_sha`，非 ref 最新 |
-| 失效可诊断 | 区分凭据失效与网络瞬态失败，分别走「提示更新」与「可自动重试」 |
+| 可复现 | 精确检出的 `commit_sha` 与触发事件一致，非 ref 最新（两种策略同此原则） |
+| 失效可诊断 | 区分凭据失效与网络瞬态失败，分别走「提示更新」与「可自动重试」（`git-archive` 无此两类失败，仅磁盘/SHA 不可达） |
+
+### 3.8 部署形态与解耦设计（三种形态 · 同一内核）
+
+> 交互式对照见 `visual/deploy-modes.html`（13 步流水线逐步对比、三份完整 profile、实测证据清单）。
+
+同一二进制按资源约束分三种部署形态。**形态差异被严格约束在三个接口点内**，
+核心（调度/状态机/构建/日志/LOA/诊断/回滚/存储/前端）三档 100% 共用，无条件分支：
+
+| | Ⅰ 个人开发者版 | Ⅱ 简易团队版 | Ⅲ 完整团队版 |
+|--|--|--|--|
+| profile | `personal` | `team-lite` | `team-full` |
+| 机器 | 1（笔记本） | 1（生产服务器**合设**） | 1+N（构建 VPS + 目标机） |
+| 代码源 | 本地 git 仓库 | GitHub | GitHub / GitLab |
+| 触发 | fsnotify 监视 `.git/` | webhook（HTTP+裸 IP 即可） | webhook |
+| 检出 | `git archive <sha>` | `git fetch <sha>` | `git fetch <sha>` |
+| 部署 | compose-local | compose-local（127.0.0.1） | ssh-remote ×N |
+| 公网暴露 | **零** | 1 端口 | 构建机 :8080 + 目标机 :22 |
+| max_concurrency | 2（给 IDE 留资源） | **1（与生产同机，强制串行）** | 4 |
+| 交付角色 | ✅ 交付（离线 E2E 验收） | ✅ 交付 · 论文代表场景（合设 E2E 验收） | ✅ 交付（SSH E2E 验收） |
+
+**三形态地位等同，均为真实交付物**（各自 E2E 验收清单见 TODO M4）；实现顺序 Ⅰ→Ⅱ→Ⅲ 只是由简入繁的工程路径，不是优先级排序。形态Ⅱ 为论文代表场景（零增量成本叙事）。
+
+**三个接口点**（`internal/core/ports.go`，实现全部在 `internal/adapters/`）：
+
+```go
+// 差异点 1：任务从哪来
+type TriggerSource interface {
+    Kind() string                                    // "local-watch" | "webhook" | "manual"
+    Watch(ctx context.Context, p *Project, emit func(BuildRequest)) error
+}
+// 差异点 2：代码怎么到手（产物保证：干净快照目录，不含 .git）
+type CheckoutStrategy interface {
+    Fetch(ctx context.Context, req CheckoutRequest) (workspace string, err error)
+}
+// 差异点 3：产物怎么上线
+type DeployTarget interface {
+    Deploy(ctx context.Context, req DeployRequest) error
+    HealthCheck(ctx context.Context) (ok bool, err error)
+    Rollback(ctx context.Context, to DeploymentID) error
+}
+```
+
+**形态分支只存在于 `cmd/devopsd/main.go` 的一个 switch**（按 profile 装配 adapters），
+core 与 adapters 互不感知；adapter 之间互不 import。依赖方向：`cmd → core ← adapters`。
+
+**LocalWatchTrigger 要点**（形态Ⅰ，替代 webhook 的触发机制）：
+- 只监视 `.git/HEAD` 与 `.git/refs/heads/*`，**绝不监视工作区文件**（否则每次 Ctrl+S 都触发）
+- fsnotify 事件防抖 2s（rebase/merge 会连发 refs 更新，取最终 SHA 触发一次）
+- 轮询兜底：每 5s `git rev-parse HEAD`（实测 77ms/次），防 fsnotify 丢事件；与监视器结果按 SHA 幂等去重
+- 分支过滤：HEAD 为符号引用（实测内容 `ref: refs/heads/main`），仅配置的分支触发
+- 合盖/关机期间错过的 commit：唤醒后由轮询发现并补触发（幂等去重防重复构建）
+- fsnotify 跨平台性为设计依据（Windows ReadDirectoryChangesW / Linux inotify，**未实测**），
+  M1 spike 第一项即验证监视 `.git/` 的事件可靠性；不写 `.git/hooks/`（不侵入用户仓库）
+
+**合设形态（Ⅱ）的保命三件套**：`max_concurrency: 1` + 构建容器限额（`--cpus 1.5 --memory 1g`）
++ 构建前磁盘水位检查 —— 构建与生产同机时，资源尖峰直接传导为线上卡顿，这三项是配置级强制项。
+
+**演进路径**：形态升级 = `scp devopsd devops.db data/ 新机器:` + 换 profile。
+SQLite 单文件 + 单二进制的红利在此兑现：构建历史、知识库、LOA 演进积累随库整体迁移，不导出、不重建。
 
 ---
 
@@ -579,20 +682,43 @@ Aider 官方推荐的 ask→code 工作流（先讨论清楚方案，再极简�
 
 ## 7. 部署形态
 
+三种形态共用同一交付物：**单二进制 `devopsd`（go:embed 内嵌前端）+ 一个 SQLite 文件 + data/ 目录**。
+形态由启动参数 `-profile` 选择（**必填**，缺失即报错并列出三档；无隐式默认——三形态地位等同），不重新编译（详见 §3.8 与 `visual/deploy-modes.html`）。
+**三种形态均为交付物**：M4 末各自通过端到端验收（Ⅰ 离线全链路 / Ⅱ webhook+合设共存 / Ⅲ SSH 分离部署），验收脚本即 TODO M4 的出口条件。
+
+**形态Ⅰ 个人开发者版**（笔记本单机，零公网）
+
 ```
-一台构建机（devopsd 所在）
-  ├── devopsd（单二进制，内嵌前端静态资源）
-  ├── devops.db（SQLite）+ data/artifacts + data/logs
-  └── Docker daemon（构建容器池，semaphore 限并发）
-        │
-        │ ssh（host key 校验）
-        ▼
-一台或多台目标主机（VPS）
-  └── docker-compose.yml + 最近 K 个版本镜像（供回滚）
+本地 git 仓库 ──fsnotify 监视 .git/──▶ devopsd（桌面 App 或 localhost:8080）
+  ├─ git archive <sha> 检出（零凭据零网络）
+  ├─ 本机 Docker 构建（--cpus 2 · max_concurrency 2）
+  ├─ DeployTarget(compose-local)：docker compose up -d（目标 = 本机）
+  └─ 健康检查 http://localhost:8080/healthz → 失败自动回滚
+数据目录：%APPDATA%/GoPulse/（整目录即全部状态，可直接备份）
+诊断端点可配本地 Ollama → 全链路可离线
 ```
 
-前置条件：构建机装 Docker；目标机装 Docker + docker-compose。
-`docker compose` 之外零外部依赖 —— 无数据库服务、无消息队列、无对象存储。
+**形态Ⅱ 简易团队版**（生产服务器合设，蹭已有公网 IP）
+
+```
+GitHub ──webhook POST──▶ http://<公网IP>:8080/api/webhooks/github（HMAC 验签）
+  └─ devopsd 与生产服务同机 → 构建镜像零传输 → compose-local 上线
+     ★ max_concurrency 1 + 容器限额 + 磁盘水位检查（与生产抢资源的三道闸）
+2–5 人共享同一 Web UI；审批队列/知识库自此具备「他人验证」语义
+```
+
+**形态Ⅲ 完整团队版**（构建与生产分离）
+
+```
+构建 VPS：devopsd + Docker daemon（max_concurrency 4，专机专用）
+      │ docker save | ssh docker load（无需私有 registry）
+      ▼ ssh（FixedHostKey 强校验）
+目标主机 ×N：docker-compose.yml + 最近 K 个版本镜像（供回滚）
+```
+
+前置条件：构建机装 Docker（或 podman）；形态Ⅲ目标机装 Docker + docker-compose。
+`docker compose` 之外零外部依赖 —— 无数据库服务、无消息队列、无对象存储、无私有 registry。
+形态Ⅰ/Ⅱ连 SSH 与公网入站都不需要（Ⅱ仅开放 webhook/UI 端口）。
 
 ---
 
@@ -758,10 +884,10 @@ export interface Evidence {
 
 | 里程碑 | 内容 | LOA 相关 |
 |--------|------|---------|
-| M1 | 后端骨架：配置、存储、路由、鉴权、任务队列 | — |
-| M2 | 构建执行：容器隔离、类型检测、状态机、审计 | — |
+| M1 | 后端骨架：**core/ports 三接口** + profile 装配、配置、存储、路由、鉴权、任务队列；**LocalWatchTrigger + ManualTrigger**（形态Ⅰ触发链路） | — |
+| M2 | 构建执行：容器隔离、类型检测、状态机、审计；**gitarchive + gitfetch 两种检出** | — |
 | M3 | 实时日志管道 + SSE | — |
-| M4 | 部署与回滚：SSH、健康检查、版本保留 | — |
+| M4 | 部署与回滚：**composelocal + sshremote 两种部署**、健康检查、版本保留；**WebhookTrigger**（形态Ⅱ/Ⅲ触发链路） | — |
 | M5 | **智能诊断（LOA 2/4）**：Analyzer Registry、证据链、Approval Gate、人工反馈 | ★ 人主导档 |
 | M6 | **全自动托管（LOA 6/7）**：知识库命中自动执行、熔断降级、预算限制、审计回放 | ★ 托管档 |
 | M7 | 并发打磨、压测、**A/B 对照实验** | ★ 实验组 |

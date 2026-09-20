@@ -2,6 +2,10 @@
 
 > 标记：✅ 完成 · 🔨 进行中 · ⬜ 待做 · ❄️ 暂缓（毕设范围外，进论文“未来工作”）
 > 预计周期基于 16 周毕设时间表；前端已完成的部分原计划在 M3，实际已提前完成。
+> **三种部署形态**（Ⅰ 个人开发者版 / Ⅱ 简易团队版 / Ⅲ 完整团队版，见 ARCHITECTURE §3.8/§7
+> 与 `visual/deploy-modes.html`）：同一二进制按 profile 装配。**三形态均为交付物，不做花瓶** ——
+> 实现顺序 Ⅰ→Ⅱ→Ⅲ（由简入繁的工程路径，非优先级排序），M4 末三形态全部可用并各自通过
+> E2E 验收（见 M4 出口条件）。形态Ⅱ 为论文代表场景（零增量成本叙事）。
 
 ---
 
@@ -9,6 +13,7 @@
 
 - [x] 系统架构设计（分层 / 状态机 / 数据模型 / API 契约）
 - [x] 论文级架构图 6 张（SVG，`diagrams/`）
+- [x] 全流程原理讲解页 `visual/guide.html` + 三形态架构对照 `visual/deploy-modes.html`（交互实测通过）
 - [x] Stitch 设计稿 13 屏 + 设计系统 DESIGN.md
 - [x] 前端工程化：Vue 3 + Vite + TS + Tailwind，从 13 张静态稿重构
   - [x] 抽共用布局（顶栏/侧栏/状态栏），面包屑/标题由路由 meta 驱动
@@ -20,28 +25,38 @@
 
 ## M1 ⬜ 后端骨架（目标 2 周）
 
-- [ ] Go 工程初始化：`cmd/devopsd` + `internal/` 分层 + Makefile（build/lint/race）
+- [ ] Go 工程初始化：`cmd/devopsd` + `internal/` 分层（含 `internal/core/ports.go` 与
+      `internal/adapters/` 骨架）+ Makefile（build/lint/race）
+- [ ] **三接口定义（§3.8，形态解耦的地基，第一天就定，之后不再改）**：
+      `TriggerSource` / `CheckoutStrategy` / `DeployTarget`；`main.go` 按 profile 装配（唯一 switch）
+- [ ] **Spike：fsnotify 监视 `.git/HEAD` 与 `refs/heads/*` 的事件可靠性**（Windows
+      ReadDirectoryChangesW）—— 形态Ⅰ触发的前提，spike 失败则轮询兜底升为主通道（77ms/次已实测）
 - [ ] **API 契约冻结**：以 `web/openapi.yaml`（OpenAPI 3.1）为准；先决策 info 里
       列出的 6 个契约缺陷（buildNumber 全局唯一性、created_at 命名、secrets 作用域、
       时间格式、deployment 路径、错误体），改完同步前端 `types.ts`
-- [ ] 配置加载（config.yaml + 环境变量密钥名），启动时校验必填项
-- [ ] SQLite 接入（modernc.org/sqlite 纯 Go）+ golang-migrate + 001_init.sql（8 张表）
+- [ ] 配置加载（config.yaml + 环境变量密钥名 + **三份 profile 预设 personal/team-lite/team-full**，
+      完整 YAML 见 `visual/deploy-modes.html` §5），启动时校验必填项
+- [ ] SQLite 接入（modernc.org/sqlite 纯 Go）+ golang-migrate + 001_init.sql（8 张表；
+      含形态字段 `projects.source_kind/repo_path`、`deploy_hosts.kind`，见 ARCHITECTURE §3.3）
 - [ ] chi 路由骨架 + 请求日志（slog）+ recover 中间件
 - [ ] REST：项目 CRUD、构建历史、`GET /api/runner`（对齐前端契约）
-- [ ] 手动触发构建：写一条 `queued` 记录 → 前端可见（闭环第一条竖切）
+- [ ] **ManualTrigger + LocalWatchTrigger**：手动按钮与本地仓库监视各写一条 `queued` 记录 →
+      前端可见（闭环第一条竖切）；LocalWatch 防抖 2s + 轮询兜底 5s + SHA 幂等去重
 - [ ] **前端切换联调**：`VITE_USE_MOCK=false`，核对每个字段（以 `src/types.ts` 为契约）
 - [ ] docker compose 开发环境（后端 + 挂载 data/）
 
 ## M2 ⬜ 构建执行（目标 3 周）
 
-- [ ] GitHub webhook：HMAC 验签、幂等去重、立即 202、事件解析
+- [ ] **gitarchive 检出（形态Ⅰ，先做——零凭据零网络，最简路径）**：`git archive <sha> | tar -x`
+      到 `data/workspaces/<build_id>/`（产物不含 .git，已实测）；SHA 不可达 → failed，不静默用 HEAD
 - [ ] 持久化队列：原子认领（`UPDATE...RETURNING`）、背压（满则 503）
 - [ ] Worker Pool：信号量限流、per-build ctx 超时、panic recover
-- [ ] **代码检出 vcs/checkout.go（详见 ARCHITECTURE §3.7，安全最易错）**：
+- [ ] **gitfetch 检出（形态Ⅱ/Ⅲ，详见 ARCHITECTURE §3.7，安全最易错）**：
       Go 侧 `git init`+`fetch --depth=1 <commit_sha>`+`checkout`，凭据走 `projects.git_credential_enc`
       （AES-GCM，**不进 secrets 表**），经 `GIT_CONFIG_COUNT` 环境变量注入、不写 URL/参数；
       检出到 `data/workspaces/<build_id>/`；区分 `git_auth`(不可重试) 与 `transient_network`(可重试)；
       `GIT_TERMINAL_PROMPT=0`、fetch `-q`、token 纳入 redact
+      （GitHub webhook 触发链路整体移至 M4——形态Ⅰ不依赖它；形态Ⅱ/Ⅲ 在 M4 合流）
 - [ ] 项目类型检测 detect.go（`package.json`/`go.mod`/`Dockerfile`… 规则表）
 - [ ] Pipeline 快照生成并写入 `builds.pipeline_json`
 - [ ] Builder：docker SDK 建容器（**只读挂载已检出代码目录**）→ 执行步骤 → 产物收集 → `defer` 清理
@@ -60,11 +75,27 @@
 - [ ] 联调：浏览器实时滚动、断线重连、`LINES/BUFFER` 计数
 - [ ] 前端补充：断线可见提示（`connected` 状态已具备）
 
-## M4 ⬜ 部署与回滚（目标 3 周）
+## M4 ⬜ 部署与回滚 + 形态Ⅱ/Ⅲ触发链路（目标 3 周）
 
-- [ ] 部署目标管理 API：主机 CRUD、连通性测试（docker/compose 预检）
-- [ ] sshx：私钥解密注入、**Host key 强制校验**、执行回报
-- [ ] Deployer：compose up -d 新镜像 → 步骤时间线（对齐前端部署详情页）
+- [ ] **composelocal 部署（形态Ⅰ/Ⅱ，先做）**：本机 `docker compose up -d` 新镜像 →
+      步骤时间线（对齐前端部署详情页）；`deploy_hosts.kind=local` 跳过 SSH
+- [ ] **WebhookTrigger（形态Ⅱ/Ⅲ）**：GitHub webhook HMAC 验签、`io.LimitReader` 1MB、
+      (repo,sha,ref) 幂等去重、立即 202、事件解析归一化（GitLab 解析器留接口）
+- [ ] 部署目标管理 API：主机 CRUD（kind=local/ssh）、连通性测试（docker/compose 预检）
+- [ ] **sshremote 部署（形态Ⅲ）**：sshx 私钥解密注入、**Host key 强制校验**、
+      `docker save | ssh docker load` 镜像传输（无私有 registry）、执行回报
+- [ ] Deployer 统一编排：两种 DeployTarget 走同一步骤时间线
+- [ ] **profile 必填校验**：`-profile` 缺失即报错并列出三档（无隐式默认，三形态地位等同）
+
+**★ M4 出口条件 = 三形态 E2E 验收全过（缺一即 M4 不算完成）**：
+
+| 形态 | 验收脚本（可重复执行） | 通过标准 |
+|------|----------------------|---------|
+| Ⅰ personal | 断网状态：新建本地仓库 → `git commit` → 界面 2s 内出现构建 → Docker 构建 → compose-local 部署 → 健康检查 → **故意改坏代码再 commit → 自动回滚** | 全程零网络请求；同一 commit 不重复触发 |
+| Ⅱ team-lite | 本机 Docker 起 toy 生产服务 + devopsd 合设（限额生效验证）：`curl` 模拟 GitHub webhook（自算 HMAC）触发构建部署；再用 cloudflared 隧道接真 GitHub push 跑通一次并录屏 | 构建期间 toy 服务 P95 延迟劣化 < 20%（三道闸有效）；webhook 幂等（重放同一 payload 不重复构建） |
+| Ⅲ team-full | WSL2 发行版充当目标机：webhook 触发 → 构建机 `docker save \| ssh docker load` → 远程 compose → 健康检查 → SSH 断连/主机密钥不匹配时正确失败（不静默） | 镜像传输+部署全链路真实走通；FixedHostKey 拒绝伪造主机 |
+
+- [ ] 验收脚本固化到 `scripts/e2e-{personal,lite,full}.sh`（论文「系统测试」章直接引用，答辩可现场跑形态Ⅰ）
 - [ ] 健康检查：HTTP 探活 × N 次间隔重试
 - [ ] 自动回滚：健康检查失败 → 重部署上一成功版本 → `rolled_back`
 - [ ] 回滚 API + 版本历史（对齐前端版本历史 UI）
@@ -123,6 +154,9 @@
 - [ ] `GET /metrics` + pprof（`/debug/pprof` 仅本地）
 - [ ] 并发压测：N=1/2/4/8/16 × 64 任务，采集吞吐/内存/排队延迟
       （论文实验章节的数据来源，M2 起就接好 Prometheus）
+- [ ] **形态资源对比**（论文「部署形态」章数据）：同一构建任务分别在
+      personal（限额2cpu）/ team-lite（限额1.5cpu+串行）/ team-full（4并发）三档 profile 下
+      采集端到端延迟与峰值内存；合设形态加测「构建期间生产端点 P95 延迟」以验证三道闸有效
 - [ ] 对比实验：与 Jenkins / GitLab CI / **Woodpecker CI**（同为 Go + SQLite 的轻量方案，
       官方称空闲时 server ≈100MB、agent ≈30MB，可作资源基线）比安装耗时、空闲内存、配置行数、端到端延迟
 - [ ] ★ **A/B 对照实验（创新点的验证方式）**：同一批失败样本分别在
@@ -135,7 +169,9 @@
 
 ## M8 ⬜ 论文与答辩（目标 2 周）
 
-- [ ] 论文初稿（架构图 6 张可直接复用 `diagrams/`；需补 LOA 策略引擎与演进机制图）
+- [ ] 论文初稿（架构图 6 张可直接复用 `diagrams/`；需补 LOA 策略引擎与演进机制图；
+      「部署形态与产品分档」一章素材取 `visual/deploy-modes.html` §0/§2/§3 ——
+      13 步流水线仅 4 步形态差异 + 三接口点 + 实测证据表）
 - [ ] 创新点表述：**混合自动化级别配置 + 级别随人工验证动态演进**（不要写成「接了个大模型」）
 - [ ] 对比实验表格 + 压测图表 + A/B 实验结果
 - [ ] 演示录屏（备份！答辩现场网络不可信）
@@ -155,7 +191,9 @@
 - ❄️ PR 预览环境（每 PR 临时容器 + 评论回链）
 - ❄️ Docker Registry 集成（当前本机 tag + tar）
 - ❄️ 通知渠道扩展（Webhook 之外：邮件 / IM）
-- ❄️ GitLab 全量支持（当前先 GitHub 打深）
+- ❄️ GitLab 全量支持（当前先 GitHub 打深；形态Ⅲ蓝图中 GitLab webhook 解析器只留接口）
+- ❄️ Wails 桌面壳（形态Ⅰ的第二交付形态：原生窗口+托盘；核心无头化后加壳即可，6–10 天机动项）
+- ❄️ 专注模式（形态Ⅰ：检测用户输入活动时暂缓自动触发 —— profile 开关已留位）
 - ❄️ 多用户团队协作（审计日志、细粒度 RBAC）
 - ❄️ **AI 自动写代码补丁并合入**（LOA 8）—— 本课题**明确排除**，理由见 ARCHITECTURE §5.5/§5.7
       （Zhou et al. ICSE'26 报告 LLM 相关动作撤销率 29.46%；全自动写码在小团队无人复核时风险不可控）

@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GoPulse CI · 三种部署形态架构设计</title>
+<style>
+:root{
+  --bg:#121316; --panel:#1f1f23; --panel2:#26282d; --hover:#292a2d;
+  --line:#2b2d30; --line2:#393b40;
+  --tx:#e2e2e6; --tx2:#8c8f99; --tx3:#555861;
+  --blue:#b1c5ff; --green:#87d894; --red:#ffb4ab; --orange:#ffb77c; --purple:#e8b3ff;
+  --mono:'JetBrains Mono','Cascadia Code',Consolas,monospace;
+  --ui:'Geist','Segoe UI','Microsoft YaHei',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--tx);font-family:var(--ui);font-size:14px;line-height:1.65}
+a{color:var(--blue);text-decoration:none}
+::selection{background:#3a4a7a}
+
+/* 布局：左侧固定导航 + 主区 */
+#side{position:fixed;left:0;top:0;bottom:0;width:216px;background:var(--panel);
+  border-right:1px solid var(--line);padding:18px 0;overflow-y:auto;z-index:10}
+#side h1{font-size:15px;padding:0 18px 4px;letter-spacing:.5px}
+#side .sub{font-size:11px;color:var(--tx2);padding:0 18px 14px;font-family:var(--mono)}
+#side a{display:block;padding:7px 18px;color:var(--tx2);font-size:13px;border-left:2px solid transparent}
+#side a:hover{color:var(--tx);background:var(--hover)}
+#side a.on{color:var(--blue);border-left-color:var(--blue);background:#232a3d}
+#side .grp{font-size:11px;color:var(--tx3);padding:12px 18px 4px;letter-spacing:1px}
+#main{margin-left:216px;padding:28px 36px 80px;max-width:1180px}
+
+/* 通用块 */
+section{margin-bottom:52px;scroll-margin-top:16px}
+h2{font-size:20px;margin-bottom:4px}
+h2 .n{color:var(--blue);font-family:var(--mono);margin-right:8px}
+h3{font-size:15px;margin:22px 0 10px;color:var(--tx)}
+.lead{color:var(--tx2);font-size:13px;margin-bottom:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px 20px;margin:14px 0}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px}
+th{color:var(--tx2);font-weight:600;text-align:left;font-size:12px;letter-spacing:.4px}
+th,td{border:1px solid var(--line);padding:8px 10px;vertical-align:top}
+tr:hover td{background:var(--hover)}
+.mono{font-family:var(--mono);font-size:12.5px}
+.tag{display:inline-block;font-size:11px;font-family:var(--mono);padding:1px 8px;border-radius:2px;
+  border:1px solid var(--line2);color:var(--tx2);margin-right:6px}
+pre{background:#18191c;border:1px solid var(--line);border-radius:6px;padding:14px 16px;
+  overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.6;margin:12px 0}
+pre .c{color:var(--tx3)} pre .k{color:var(--purple)} pre .s{color:var(--green)} pre .hl{color:var(--orange)}
+
+/* 形态卡 */
+.topo{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:16px;margin:16px 0}
+.tcard{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden;
+  display:flex;flex-direction:column}
+.tcard.active{border-color:var(--blue)}
+.tcard header{padding:14px 18px 10px;border-bottom:1px solid var(--line);cursor:pointer}
+.tcard header .num{font-family:var(--mono);font-size:11px;color:var(--blue);letter-spacing:1px}
+.tcard header h3{margin:2px 0 2px;font-size:16px}
+.tcard header .en{font-family:var(--mono);font-size:11px;color:var(--tx3)}
+.tcard header .sl{font-size:12px;color:var(--tx2);margin-top:6px}
+.tcard .fig{padding:14px 16px;background:#18191c;border-bottom:1px solid var(--line);
+  font-family:var(--mono);font-size:11.5px;line-height:1.55;white-space:pre;overflow-x:auto;color:#c9cdd6}
+.tcard .fig .b{color:var(--blue)} .tcard .fig .g{color:var(--green)}
+.tcard .fig .o{color:var(--orange)} .tcard .fig .r{color:var(--red)} .tcard .fig .d{color:var(--tx3)}
+.tbody{padding:4px 18px 16px}
+.frow{display:flex;gap:10px;padding:7px 0;border-bottom:1px dashed var(--line);font-size:12.5px}
+.frow:last-child{border-bottom:none}
+.frow .k{flex:0 0 78px;color:var(--tx2);font-size:12px}
+.frow .v{flex:1}
+.risk{margin-top:10px;padding:10px 12px;background:#241f1d;border:1px solid #4a3527;border-radius:6px}
+.risk .t{font-size:12px;color:var(--orange);font-weight:600;margin-bottom:4px}
+.risk li{font-size:12px;color:var(--tx2);margin:4px 0 4px 16px}
+.risk b{color:var(--tx);font-weight:600}
+
+/* 流水线对比表 */
+.pipe td.step{font-family:var(--mono);color:var(--tx3);width:34px;text-align:center}
+.pipe td.name{width:104px;font-weight:600;font-size:12.5px}
+.pipe tr.diff td{background:#232a3d}
+.pipe tr.diff:hover td{background:#2a3350}
+.pipe .diffmark{color:var(--orange);font-family:var(--mono);font-size:11px}
+.legend{font-size:12px;color:var(--tx2);margin:8px 0}
+.legend .sw{display:inline-block;width:11px;height:11px;border-radius:2px;vertical-align:-1px;margin:0 5px 0 14px}
+
+/* profile 页签 */
+.tabs{display:flex;gap:8px;margin:14px 0 0}
+.tabs button{background:var(--panel);border:1px solid var(--line);color:var(--tx2);
+  padding:7px 16px;border-radius:6px 6px 0 0;cursor:pointer;font-family:var(--ui);font-size:13px;
+  border-bottom:none}
+.tabs button.on{background:var(--panel2);color:var(--blue);border-color:var(--line2)}
+.tabpane{display:none}
+.tabpane.on{display:block}
+
+/* 演进路径 */
+.evo{display:flex;flex-direction:column;gap:12px;margin:14px 0}
+.evrow{display:grid;grid-template-columns:120px 1fr;gap:14px;background:var(--panel);
+  border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.evrow .arrow{font-family:var(--mono);font-size:15px;color:var(--blue);padding-top:2px}
+.evrow .arrow small{display:block;color:var(--tx3);font-size:11px;font-family:var(--ui)}
+.evrow .what{font-size:13px}
+.evrow .why{font-size:12px;color:var(--tx2);margin-top:6px;padding-top:6px;border-top:1px dashed var(--line)}
+
+/* 实测证据 */
+.ev-ok{color:var(--green);font-family:var(--mono)}
+.ev-warn{color:var(--orange);font-family:var(--mono)}
+
+/* 共享内核网格 */
+.core-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;margin:14px 0}
+.core-item{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.core-item .p{font-family:var(--mono);font-size:12.5px;color:var(--blue)}
+.core-item .d{font-size:12.5px;color:var(--tx);margin:4px 0}
+.core-item .n{font-size:11.5px;color:var(--tx2)}
+
+.callout{border-left:3px solid var(--blue);background:#1c2233;padding:12px 16px;border-radius:0 6px 6px 0;
+  margin:14px 0;font-size:13px}
+.callout.warn{border-left-color:var(--orange);background:#241f1d}
+.callout b{color:var(--blue)} .callout.warn b{color:var(--orange)}
+
+footer{margin-top:60px;padding-top:16px;border-top:1px solid var(--line);
+  color:var(--tx3);font-size:12px;font-family:var(--mono)}
+@media print{
+  #side{display:none} #main{margin-left:0;max-width:none}
+  .tcard,.card,.evrow,.core-item{break-inside:avoid}
+  body{background:#fff;color:#111}
+  .tcard .fig,pre{background:#f6f6f6;color:#222}
+}
+@media (max-width:900px){#side{display:none}#main{margin-left:0;padding:20px}}
+</style></head><body>
+<nav id="side">
+<h1>GoPulse CI</h1><div class="sub">deploy-modes · v1.0</div>
+<div class="grp">总览</div>
+<a href="#s0">为什么是三种形态</a>
+<a href="#s1">三形态拓扑对照</a>
+<div class="grp">解耦设计</div>
+<a href="#s2">13 步流水线对比</a>
+<a href="#s3">三个解耦点</a>
+<a href="#s4">共享内核</a>
+<div class="grp">落地</div>
+<a href="#s5">Profile 配置</a>
+<a href="#s6">演进路径</a>
+<a href="#s7">前端影响面</a>
+<a href="#s8">实测证据清单</a>
+</nav>
+<main id="main">
+<header style="margin-bottom:36px">
+<h2 style="font-size:24px">三种部署形态 · 架构设计</h2>
+<p class="lead" style="margin-top:8px">个人开发者版（无 GitHub · 无 VPS）→ 简易团队版（合设 · 蹭生产机）→ 完整团队版（构建/目标分离）。
+同一二进制，三个接口点，三份 profile。所有技术断言附实测出处（§8），设计推断单独标注。</p>
+</header>
+<section id="s0"><h2><span class="n">§0</span>为什么是三种形态</h2><div class="lead">从资源约束出发的产品分档，而非功能阉割。</div>
+<p style="font-size:13.5px">同一个二进制 <span class="mono">devopsd</span>，靠三个接口点 + 一份 profile 配置，
+覆盖从「一台笔记本、零公网依赖」到「构建机与多台生产机分离」的全部场景。
+三档之间<b style="color:var(--blue)">不是三个产品</b>，而是同一软件在三种资源约束下的部署形态 ——
+差异被严格约束在<b>触发、检出、部署</b>三个接口点内，核心（调度 / 状态机 / 构建 / 日志 / LOA / 诊断 / 回滚 / 存储 / 前端）三档 100% 共用。</p>
+<div class="callout"><b>不重复造轮子的三条纪律：</b>
+① 核心不知道形态存在（<span class="mono">internal/core</span> 禁止 import 任何 adapter）；
+② 形态差异全部收敛到 <span class="mono">cmd/devopsd/main.go</span> 的一个 switch；
+③ 新增第 4 种形态 = 新增一个 adapter + 一份 profile，核心与前端零改动。</div>
+<table>
+<thead><tr><th></th><th>Ⅰ 个人开发者版</th><th>Ⅱ 简易团队版</th><th>Ⅲ 完整团队版</th></tr></thead>
+<tbody>
+<tr><td><b>profile</b></td><td class="mono">personal</td><td class="mono">team-lite</td><td class="mono">team-full</td></tr>
+<tr><td><b>机器数</b></td><td>1（笔记本）</td><td>1（生产服务器合设）</td><td>1+N（构建 VPS + 目标机）</td></tr>
+<tr><td><b>代码源</b></td><td>本地 git 仓库</td><td>GitHub</td><td>GitHub / GitLab</td></tr>
+<tr><td><b>触发</b></td><td>fsnotify 监视 .git/</td><td>webhook（HTTP+裸 IP 即可）</td><td>webhook</td></tr>
+<tr><td><b>检出</b></td><td class="mono">git archive &lt;sha&gt;</td><td class="mono">git fetch &lt;sha&gt;</td><td class="mono">git fetch &lt;sha&gt;</td></tr>
+<tr><td><b>部署</b></td><td>compose-local</td><td>compose-local（127.0.0.1）</td><td>ssh-remote ×N</td></tr>
+<tr><td><b>公网暴露</b></td><td style="color:var(--green)">零</td><td>1 个端口（:8080）</td><td>构建机 :8080 + 目标机 :22</td></tr>
+<tr><td><b>月成本</b></td><td style="color:var(--green)">0</td><td style="color:var(--green)">0（蹭已有生产机）</td><td>1 台 VPS</td></tr>
+<tr><td><b>并发</b></td><td class="mono">max_concurrency 2</td><td class="mono">1（强制串行）</td><td class="mono">4</td></tr>
+<tr><td><b>用户</b></td><td>单用户</td><td>2–5 人共享</td><td>团队 + RBAC</td></tr>
+<tr><td><b>论文角色</b></td><td style="color:var(--blue)">实现与演示主线（离线可演）</td><td>第二形态（配置即得）</td><td>架构蓝图（可扩展性论述）</td></tr>
+</tbody></table>
+<p style="font-size:12.5px;color:var(--tx2)">递进逻辑：每一档只比上一档多一台机器 / 一层网络依赖。
+「简易团队版」在代码上与「完整团队版」同路径 —— 仅 <span class="mono">deploy_hosts.addr</span> 填 127.0.0.1，
+它本质是一份配置，不是一个开发任务。</p>
+</section><section id="s1"><h2><span class="n">§1</span>三形态拓扑对照</h2><div class="lead">点击卡片标题可在 §2 流水线表中聚焦对应列。</div><div class="topo">
+<div class="tcard" data-topo="personal">
+  <header><div class="num">形态 Ⅰ</div><h3>个人开发者版</h3>
+    <div class="en">profile: personal</div><div class="sl">零公网 · 零成本 · 可完全离线</div></header>
+  <div class="fig">┌─ 你的笔记本（唯一一台机器） ──────────────────────────────────────────────────────────
+│ 本地 git 仓库  ~/code/web-api
+│   │  commit → .git/HEAD · refs/heads/* 变化
+│   ▼
+│ devopsd（Wails 桌面 App，或 localhost:8080 服务 + 浏览器）
+│   ├─ LocalWatchTrigger   fsnotify 监视 .git/ · 防抖 2s · 轮询兜底 5s（77ms/次，实测）
+│   ├─ git archive &lt;sha&gt;   干净快照：零凭据 · 零网络 · 不含 .git（实测）
+│   ├─ 本机 Docker 构建    --cpus 2 · max_concurrency 2（给 IDE 留资源）
+│   ├─ LogPipe → SSE       浏览器实时日志（环形缓冲 + 慢订阅者丢弃）
+│   ├─ DeployTarget(local) docker compose up -d（目标 = localhost）
+│   ├─ 健康检查            http://localhost:8080/healthz · 失败自动回滚
+│   └─ LOA 引擎            失败 → analyzer → LLM（云 API 或本地 Ollama）
+│ 
+│ 数据目录：%APPDATA%/GoPulse/（devops.db + artifacts + logs，整目录即全部状态）
+└──────────────────────────────────────────────────────────────────────────────────────</div>
+  <div class="tbody"><div class="frow"><div class="k">代码源</div><div class="v">本地 git 仓库（你本来就在用的工作目录，无需 push）</div></div><div class="frow"><div class="k">触发</div><div class="v">fsnotify 监视 .git/HEAD 与 refs/heads/*，防抖 2s；5s 轮询 rev-parse HEAD 兜底</div></div><div class="frow"><div class="k">检出</div><div class="v">git archive &lt;sha&gt; | tar -x —— 不需要任何 git 凭据</div></div><div class="frow"><div class="k">部署</div><div class="v">compose-local（127.0.0.1），无 SSH</div></div><div class="frow"><div class="k">公网暴露</div><div class="v">无 —— 零入站端口，无需域名/证书/穿透</div></div><div class="frow"><div class="k">月成本</div><div class="v">0</div></div><div class="frow"><div class="k">适用</div><div class="v">独立开发者、学生项目、离线环境</div></div><div class="frow"><div class="k">交付角色</div><div class="v">✅ 交付物（离线 E2E 验收）；答辩可现场演示：全链路离线，不依赖教室网络</div></div>
+    <div class="risk"><div class="t">⚠ 风险与对策</div><ul><li><b>构建抢开发机资源</b> —— 容器限额 --cpus/--memory + max_concurrency=2；可选「专注模式」（检测输入活动时暂缓自动触发）</li><li><b>依赖容器引擎</b> —— Windows/macOS 需 Docker Desktop（个人/教育免费，官方 license 已核实）或 podman；Linux 原生 Docker</li><li><b>笔记本非 7×24</b> —— 自动触发仅在开机时生效；合盖期间错过的 commit 由轮询兜底在唤醒后补触发（SHA 幂等去重防重复）</li></ul></div>
+  </div>
+</div>
+<div class="tcard" data-topo="lite">
+  <header><div class="num">形态 Ⅱ</div><h3>简易团队版</h3>
+    <div class="en">profile: team-lite</div><div class="sl">蹭已有的生产服务器 · 增量成本为零</div></header>
+  <div class="fig">┌─ 生产服务器（唯一一台机器，自带公网 IP） ─────────────────────────────────────────────────
+│ GitHub ──webhook POST──▶ http://&lt;公网IP&gt;:8080/api/webhooks/github
+│   │  HMAC-SHA256 验签（纯 HTTP + 裸 IP 即可，GitHub 官方支持，已核实）
+│   ▼
+│ devopsd :8080（与生产服务同机，防火墙仅放行这一个端口）
+│   ├─ WebhookTrigger      验签 → 事件归一化 → (repo,sha,ref) 幂等入队 → 立即 202
+│   ├─ git fetch &lt;sha&gt;     远程检出：GIT_CONFIG_COUNT 注入凭据，不落盘不进 argv（实测）
+│   ├─ Docker 构建         --cpus 1.5 --memory 1g · max_concurrency 1（串行，给生产留余量）
+│   ├─ 构建前磁盘水位检查   低于阈值拒绝入队（防止构建塞满磁盘拖垮生产）
+│   ├─ DeployTarget(local) compose up -d（deploy_hosts.addr = 127.0.0.1，跳过 SSH）
+│   ├─ 健康检查            http://localhost:8080/healthz · 失败自动回滚上一版本镜像
+│   └─ LOA 引擎            审批队列开始有「他人」—— 同事批准，知识库团队验证
+│ 
+│ 团队 2–5 人共享同一个 Web UI（多用户 + 简单角色）
+└──────────────────────────────────────────────────────────────────────────────────────────</div>
+  <div class="tbody"><div class="frow"><div class="k">代码源</div><div class="v">GitHub（必须先 push —— 这是与形态Ⅰ的本质区别）</div></div><div class="frow"><div class="k">触发</div><div class="v">GitHub webhook → 公网 IP 直达，无需域名/证书/反代/穿透（最小配置 4 件事）</div></div><div class="frow"><div class="k">检出</div><div class="v">git fetch &lt;sha&gt;，凭据走 §3.7 的 GIT_CONFIG_COUNT 方案</div></div><div class="frow"><div class="k">部署</div><div class="v">compose-local：目标就是本机，镜像零传输</div></div><div class="frow"><div class="k">公网暴露</div><div class="v">仅 :8080（webhook + UI 同端口）；建议防火墙限源</div></div><div class="frow"><div class="k">月成本</div><div class="v">0（复用已在付费的生产服务器）</div></div><div class="frow"><div class="k">适用</div><div class="v">2–5 人小团队，已有生产服务器，项目为轻服务</div></div><div class="frow"><div class="k">交付角色</div><div class="v">✅ 交付物 · 论文代表场景（合设 E2E 验收）；现场演示可用 curl 模拟 webhook + 本机 toy 服务离线跑通，真 GitHub 联动录屏备用</div></div>
+    <div class="risk"><div class="t">⚠ 风险与对策</div><ul><li><b>构建与生产抢资源（本形态最大风险）</b> —— max_concurrency=1 强制串行 + 容器 CPU/内存限额 + 磁盘水位检查；重构建项目应升级形态Ⅲ</li><li><b>构建尖峰影响线上响应</b> —— 构建窗口可配置（如避开业务高峰）；健康检查失败自动回滚兜底</li><li><b>同机安全边界</b> —— 构建容器不挂 docker.sock、代码只读挂载（既有设计），容器逃逸不等于生产数据沦陷</li></ul></div>
+  </div>
+</div>
+<div class="tcard" data-topo="full">
+  <header><div class="num">形态 Ⅲ</div><h3>完整团队版</h3>
+    <div class="en">profile: team-full</div><div class="sl">构建与生产分离 · 现有 ARCHITECTURE.md 的主体蓝图</div></header>
+  <div class="fig">┌─ 构建 VPS（1–2 核即可） ───────────────────────────────────────
+│ GitHub / GitLab ──webhook──▶ devopsd :8080
+│   ├─ WebhookTrigger      验签 → 幂等入队 → 202（同形态Ⅱ）
+│   ├─ git fetch &lt;sha&gt;     远程检出（同形态Ⅱ）
+│   ├─ Docker 构建         max_concurrency 4（专机专用，可并行）
+│   ├─ 镜像 tag = commit SHA（不可变，回滚秒级）
+│   └─ LOA 引擎 + 知识库 + 审批队列 + RBAC（完整团队语义）
+└───────────────────────────────────────────────────────────────
+
+        ▲  │ ssh（FixedHostKey）· docker save | ssh docker load
+        │  ▼
+┌─ 目标主机 ×N（生产 / 预发 / 测试） ────────────────────────────────────────
+│ 构建 VPS ──docker save | ssh docker load──▶ 目标机（无需私有 registry）
+│   ├─ SSH 部署            FixedHostKey 强校验（拒绝 InsecureIgnoreHostKey）
+│   ├─ compose up -d       current → releases/&lt;sha&gt; 软链切换
+│   ├─ 健康检查            目标机 URL · 连续 3 次 200 判成功
+│   └─ 失败自动回滚        previous_deployment_id 显式回滚链 · 保留最近 K 版
+└───────────────────────────────────────────────────────────────────────────</div>
+  <div class="tbody"><div class="frow"><div class="k">代码源</div><div class="v">GitHub / GitLab（webhook 双平台解析归一化）</div></div><div class="frow"><div class="k">触发</div><div class="v">webhook（同形态Ⅱ）</div></div><div class="frow"><div class="k">检出</div><div class="v">git fetch &lt;sha&gt;（同形态Ⅱ）</div></div><div class="frow"><div class="k">部署</div><div class="v">ssh-remote：docker save | ssh docker load 流式传输，省掉私有 registry 组件</div></div><div class="frow"><div class="k">公网暴露</div><div class="v">构建机 :8080 入站；目标机仅 SSH（22）入站且限构建机源 IP</div></div><div class="frow"><div class="k">月成本</div><div class="v">构建 VPS ×1（目标机是本来就有的生产机）</div></div><div class="frow"><div class="k">适用</div><div class="v">正式团队、多项目、多目标环境、构建较重</div></div><div class="frow"><div class="k">交付角色</div><div class="v">✅ 交付物（SSH E2E 验收，WSL2 发行版可充当目标机）；论文「可扩展性」论述</div></div>
+    <div class="risk"><div class="t">⚠ 风险与对策</div><ul><li><b>多一台机器的运维</b> —— 仍是单二进制 + SQLite：scp 两个文件即完成迁移（见「演进路径」）</li><li><b>镜像传输带宽</b> —— save|ssh load 为流式 gzip；大镜像首次传输慢，增量层复用后收敛</li><li><b>SSH 凭据管理</b> —— 私钥 AES-GCM 加密入库 + host key 强校验（§3.6/§3.7 既有设计）</li></ul></div>
+  </div>
+</div></div></section><section id="s2"><h2><span class="n">§2</span>13 步流水线对比</h2><div class="lead">同一核心流程在三档下的逐步对照 —— 差异一目了然。</div>
+<table class="pipe">
+<thead><tr><th>#</th><th>流水线步骤</th><th>Ⅰ 个人开发者版</th><th>Ⅱ 简易团队版</th><th>Ⅲ 完整团队版</th></tr></thead>
+<tbody><tr class="diffable diff"><td class="step">1</td><td class="name">触发事件 <span class="diffmark">◆</span></td><td class="mono">监视本地 .git/（fsnotify+防抖+轮询兜底）</td><td class="mono">GitHub webhook POST</td><td class="mono">GitHub/GitLab webhook POST</td></tr><tr class="diffable diff"><td class="step">2</td><td class="name">真实性校验 <span class="diffmark">◆</span></td><td class="mono">无需（本地磁盘读取，不存在伪造通道）</td><td class="mono">HMAC-SHA256 验签</td><td class="mono">HMAC-SHA256 验签</td></tr><tr class="diffable"><td class="step">3</td><td class="name">幂等入队 </td><td class="mono">(repo,sha,ref) 去重 → builds 表 queued</td><td class="mono">同左</td><td class="mono">同左</td></tr><tr class="diffable"><td class="step">4</td><td class="name">调度认领 </td><td class="mono">UPDATE…RETURNING 原子认领 · 同项目串行</td><td class="mono">同左</td><td class="mono">同左</td></tr><tr class="diffable diff"><td class="step">5</td><td class="name">代码检出 <span class="diffmark">◆</span></td><td class="mono">git archive &lt;sha&gt;（零凭据零网络）</td><td class="mono">git fetch &lt;sha&gt;（凭据注入）</td><td class="mono">git fetch &lt;sha&gt;（凭据注入）</td></tr><tr class="diffable"><td class="step">6</td><td class="name">检测+快照 </td><td class="mono">规则引擎识别项目类型 → pipeline_json 快照</td><td class="mono">同左</td><td class="mono">同左</td></tr><tr class="diffable"><td class="step">7</td><td class="name">容器构建 </td><td class="mono">Docker 隔离 · 限额 2cpu</td><td class="mono">Docker 隔离 · 限额 1.5cpu/1g</td><td class="mono">Docker 隔离 · 并行 ×4</td></tr><tr class="diffable"><td class="step">8</td><td class="name">实时日志 </td><td class="mono">LogPipe 环形缓冲 → SSE 扇出 → 批量落库</td><td class="mono">同左</td><td class="mono">同左</td></tr><tr class="diffable"><td class="step">9</td><td class="name">产物镜像 </td><td class="mono">commit 为 web-api:&lt;sha&gt;（本机 daemon）</td><td class="mono">同左</td><td class="mono">同左</td></tr><tr class="diffable diff"><td class="step">10</td><td class="name">部署 <span class="diffmark">◆</span></td><td class="mono">compose-local（localhost）</td><td class="mono">compose-local（127.0.0.1）</td><td class="mono">save|ssh load → 远程 compose</td></tr><tr class="diffable"><td class="step">11</td><td class="name">健康检查 </td><td class="mono">http://localhost:8080/healthz</td><td class="mono">http://localhost:8080/healthz</td><td class="mono">目标机 URL · 重试 5 次</td></tr><tr class="diffable"><td class="step">12</td><td class="name">失败诊断 </td><td class="mono">LOA 决策 → analyzer → LLM（可本地 Ollama）</td><td class="mono">LOA → analyzer → LLM</td><td class="mono">LOA → analyzer → LLM</td></tr><tr class="diffable"><td class="step">13</td><td class="name">回滚 </td><td class="mono">上一版本镜像 · 软链切换 · 秒级</td><td class="mono">同左</td><td class="mono">同左（经 SSH）</td></tr></tbody></table>
+<div class="legend"><span class="sw" style="background:#232a3d;border:1px solid #3a4a7a"></span>蓝底 ◆ = 形态差异步骤（13 步中仅 4 步不同）
+<label style="margin-left:18px;cursor:pointer"><input type="checkbox" id="diffOnly"> 只看差异步骤</label>
+<span style="margin-left:14px;color:var(--tx3)">（点击形态卡标题可在下表聚焦对应列）</span></div>
+<div class="callout">13 步中仅 <b>4 步</b>（触发 / 验签 / 检出 / 部署）存在形态差异，且全部落在接口点之后；
+其余 9 步 —— 幂等入队、原子认领、检测快照、容器构建、日志管道、镜像产物、健康检查、LOA 诊断、回滚 ——
+三档<b>逐字节共用同一实现</b>。这就是「拆三档但只写一份核心」的量化依据。</div></section><section id="s3"><h2><span class="n">§3</span>三个解耦点（接口层）</h2><div class="lead">TriggerSource · CheckoutStrategy · DeployTarget —— 全系统仅有的形态分支。</div>
+<h3>3.1 核心只定义接口（ports）</h3>
+<pre>// internal/core/ports.go —— 核心只定义接口，不知道任何形态的存在
+
+// 差异点 1：任务从哪来
+type TriggerSource interface {
+    Kind() string                                        // "local-watch" | "webhook" | "manual"
+    Watch(ctx context.Context, p *Project,
+          emit func(BuildRequest)) error                 // 发现新任务即 emit；阻塞直到 ctx 取消
+}
+
+// 差异点 2：代码怎么到手
+type CheckoutStrategy interface {
+    Fetch(ctx context.Context, req CheckoutRequest) (workspace string, err error)
+    // CheckoutRequest{ Repo, Ref, CommitSHA }  → workspace 为干净快照目录（保证不含 .git）
+}
+
+// 差异点 3：产物怎么上线
+type DeployTarget interface {
+    Deploy(ctx context.Context, req DeployRequest) error // 镜像 tag + compose 配置 → 上线
+    HealthCheck(ctx context.Context) (ok bool, err error)
+    Rollback(ctx context.Context, to DeploymentID) error
+}</pre>
+<h3>3.2 装配：全系统唯一的形态分支点</h3>
+<pre>// cmd/devopsd/main.go —— 全系统唯一知道「形态」的地方
+func wire(cfg *config.Config) (*App, error) {
+    var trig []core.TriggerSource
+    switch cfg.Profile.Trigger {            // ← 全部形态分支收敛于这一个 switch
+    case "local-watch":
+        trig = append(trig, localwatch.New(cfg.Repo))       // fsnotify + 轮询兜底
+    case "webhook":
+        trig = append(trig, webhook.New(cfg.Server, store)) // chi 路由 POST /api/webhooks/*
+    }
+    trig = append(trig, manual.New(store))                  // 手动按钮：三形态都有
+
+    var checkout core.CheckoutStrategy
+    switch cfg.Profile.Checkout {
+    case "git-archive": checkout = gitarchive.New()         // 本地仓库
+    case "git-fetch":   checkout = gitfetch.New(cfg.Crypto) // 远程 + 凭据注入
+    }
+
+    deploy := deployregistry.Of(cfg.Profile.Deploy)         // "compose-local" | "ssh-remote"
+
+    return NewApp(trig, checkout, deploy, core.Shared(...)) // 共享核心：调度/状态机/LOA/日志/存储
+}</pre>
+<h3>3.3 依赖方向（编译期强制）</h3>
+<pre>依赖方向（编译期强制，go vet + 目录约定双重保证）：
+
+  cmd/devopsd ──▶ internal/core ◀── internal/adapters/{localwatch,webhook,gitarchive,
+        │              ▲                     gitfetch,composelocal,sshremote}
+        │              │
+        └────装配──────┘   core 定义接口；adapters 实现接口；cmd 按 profile 装配
+
+  ✗ 禁止：internal/core import 任何 adapter（核心不知道形态存在）
+  ✗ 禁止：adapter 之间互相 import（local-watch 不知道 webhook 的存在）
+  ✓ 新增第 4 种形态 = 新增 adapter + 新增 profile，core 与前端零改动</pre>
+<h3>3.4 adapter 矩阵：形态 × 接口点</h3>
+<table><thead><tr><th>接口</th><th>形态 Ⅰ</th><th>形态 Ⅱ / Ⅲ</th><th>恒有</th></tr></thead><tbody>
+<tr><td class="mono">TriggerSource</td><td class="mono">local-watch（Ⅰ）</td><td class="mono">webhook（Ⅱ/Ⅲ）</td><td class="mono">manual（Ⅰ/Ⅱ/Ⅲ 恒有）</td></tr><tr><td class="mono">CheckoutStrategy</td><td class="mono">git-archive（Ⅰ）</td><td class="mono">git-fetch（Ⅱ/Ⅲ）</td><td class="mono">—</td></tr><tr><td class="mono">DeployTarget</td><td class="mono">compose-local（Ⅰ/Ⅱ）</td><td class="mono">ssh-remote（Ⅲ）</td><td class="mono">—</td></tr>
+</tbody></table>
+<div class="callout warn"><b>与「一切皆插件」的关系：</b>这三个接口与 analyzer/action/detector 注册表是同一套哲学的两层 ——
+接口层解耦「部署形态」，注册表层解耦「诊断能力扩展」。两者互不感知：
+换形态不影响插件，装插件不影响形态。</div></section><section id="s4"><h2><span class="n">§4</span>共享内核（100% 复用）</h2><div class="lead">12 个模块无条件分支，三档逐字节共用。</div>
+<p style="font-size:13px">以下 12 个模块在三档中<b>不存在任何条件分支</b>，形态差异要么在接口点之外，要么已收敛为配置值：</p>
+<div class="core-grid">
+<div class="core-item"><div class="p">scheduler/</div><div class="d">队列原子认领 · Worker Pool（semaphore 限流）· 背压（503）· 优雅关闭</div><div class="n">形态差异仅体现在 max_concurrency 配置值（2/1/4）</div></div><div class="core-item"><div class="p">build/state.go</div><div class="d">9 状态机 + 迁移白名单 + build_events 审计</div><div class="n">三形态共用同一状态机，无分叉</div></div><div class="core-item"><div class="p">build/detect.go</div><div class="d">项目类型检测规则表 + pipeline_json 执行快照</div><div class="n">规则引擎与形态无关</div></div><div class="core-item"><div class="p">logpipe/</div><div class="d">环形缓冲 · 批量落库 · fan-out 扇出 · 慢订阅者丢弃</div><div class="n">SSE 推流三形态一致（个人版是 localhost，团队版走公网同源）</div></div><div class="core-item"><div class="p">loa/</div><div class="d">Analyzer Registry · Policy Resolver · 证据链 · 知识库 · LOA 动态演进 · 熔断/预算/审计</div><div class="n">核心创新点，形态无关；团队形态下审批与验证语义更完整</div></div><div class="core-item"><div class="p">diagnose/</div><div class="d">日志裁剪（头+尾8KB）· redact 脱敏 · OpenAI 兼容客户端 · 异步不阻塞</div><div class="n">端点可配置：云 API（Ⅱ/Ⅲ）或本地 Ollama（Ⅰ 可全离线）</div></div><div class="core-item"><div class="p">deploy/health.go</div><div class="d">健康检查（重试/间隔/连续 N 次判定）</div><div class="n">仅探测 URL 不同（localhost vs 目标机），逻辑同一份</div></div><div class="core-item"><div class="p">deploy/rollback.go</div><div class="d">previous_deployment_id 显式回滚链 · 保留 K 版</div><div class="n">回滚动作经 DeployTarget 接口，local/ssh 各自实现</div></div><div class="core-item"><div class="p">store/</div><div class="d">14 张表 schema · sqlc 查询 · 迁移版本化</div><div class="n">三形态同一 schema；projects.deploy_kind 区分 local/ssh</div></div><div class="core-item"><div class="p">crypto/</div><div class="d">AES-GCM 封装 · 主密钥仅环境变量</div><div class="n">个人版几乎无密可存（本地检出零凭据）；团队版存 webhook secret / git 凭据 / SSH 私钥</div></div><div class="core-item"><div class="p">httpapi/</div><div class="d">chi 路由 · REST · SSE · JWT/RBAC · 限流</div><div class="n">webhook 路由仅在 Ⅱ/Ⅲ 注册（装配期决定，非运行期开关）</div></div><div class="core-item"><div class="p">web/（前端）</div><div class="d">13 页面 · 167 测试 · mock 契约 · go:embed 内嵌</div><div class="n">同一份前端；仅新建项目向导多一种「本地目录」项目类型（见下方前端影响）</div></div>
+</div></section><section id="s5"><h2><span class="n">§5</span>Profile 配置（三档）</h2><div class="lead">配置文件即产品分档 —— 完整 YAML，可直接作为 config 预设落地。</div><div class="tabs" data-group="profiles"><button data-pane="pf-personal" class="on">形态Ⅰ 个人开发者版</button><button data-pane="pf-team-lite" class="">形态Ⅱ 简易团队版（合设）</button><button data-pane="pf-team-full" class="">形态Ⅲ 完整团队版（分设）</button></div><div class="tabpane on" id="pf-personal" data-group="profiles"><pre>profile: personal
+server:
+  addr: "127.0.0.1:8080"        # 只监听回环，不对局域网暴露
+storage:
+  data_dir: "${APPDATA}/GoPulse" # 整目录即全部状态，可直接备份/迁移
+trigger:
+  kind: local-watch
+  watch_paths: ["~/code/web-api"]
+  debounce: 2s
+  poll_interval: 5s              # rev-parse 兜底（实测 77ms/次）
+  branches: [main]               # 仅监视配置的分支
+checkout:
+  kind: git-archive              # 零凭据：本地仓库导出快照
+scheduler:
+  max_concurrency: 2             # 给 IDE/浏览器留资源
+build:
+  container_limits: { cpus: "2", memory: 4g }
+deploy:
+  kind: compose-local            # 目标 = 本机 Docker
+  health_url: "http://localhost:8080/healthz"
+diagnose:
+  base_url: "http://localhost:11434/v1"   # 本地 Ollama → 全离线；可换云 API
+  model: "qwen2.5-coder:7b"</pre></div><div class="tabpane" id="pf-team-lite" data-group="profiles"><pre>profile: team-lite
+server:
+  addr: "0.0.0.0:8080"           # 公网可达；防火墙仅放行 8080
+  base_url: "http://203.0.113.45:8080"   # webhook 回调地址（裸 IP 可用，已核实）
+trigger:
+  kind: webhook
+  providers: [github]
+  secret_store: encrypted        # 每项目独立 webhook secret（AES-GCM）
+checkout:
+  kind: git-fetch                # §3.7：GIT_CONFIG_COUNT 注入凭据，不落盘
+scheduler:
+  max_concurrency: 1             # ★ 与生产同机 → 强制串行
+build:
+  container_limits: { cpus: "1.5", memory: 1g }   # ★ 给生产服务留余量
+  disk_watermark: 5GB            # 低于水位拒绝入队（防构建塞满磁盘）
+deploy:
+  kind: compose-local            # 目标就是本机；deploy_hosts.addr = 127.0.0.1
+  health_url: "http://localhost:8080/healthz"
+  auto_rollback: true
+auth:
+  multi_user: true               # 2–5 人共享 UI + 简单角色
+diagnose:
+  base_url: "https://api.example.com/v1"
+  model: "gpt-4o-mini"</pre></div><div class="tabpane" id="pf-team-full" data-group="profiles"><pre>profile: team-full
+server:
+  addr: "0.0.0.0:8080"
+  base_url: "https://ci.example.com"      # 建议配域名+证书（webhook 走 HTTPS 更稳）
+trigger:
+  kind: webhook
+  providers: [github, gitlab]    # 双平台事件归一化（internal/vcs）
+checkout:
+  kind: git-fetch
+scheduler:
+  max_concurrency: 4             # 专机专用，可并行
+  queue_capacity: 200
+build:
+  container_limits: { cpus: "2", memory: 4g }
+deploy:
+  kind: ssh-remote               # 1..N 台目标机
+  hosts_from: db                 # deploy_hosts 表（私钥 AES-GCM · FixedHostKey）
+  transfer: "save-ssh-load"      # docker save | ssh docker load（无需 registry）
+  keep_versions: 5
+auth:
+  multi_user: true
+  rbac: [admin, member]
+diagnose:
+  base_url: "https://api.example.com/v1"
+  model: "gpt-4o-mini"</pre></div>
+<div class="callout">三份 profile 就是「产品分档」的全部实现 —— <b>没有三套代码，只有三份 YAML</b>。
+标 ★ 的两行是形态Ⅱ的命门：与生产同机时，串行 + 限额不是优化项，是保命项。</div></section><section id="s6"><h2><span class="n">§6</span>形态演进路径</h2><div class="lead">用户长大了怎么办：升级 = 搬文件 + 换 profile。</div>
+<div class="evo">
+<div class="evrow"><div class="arrow">Ⅰ → Ⅱ<small>个人 → 简易团队</small></div><div><div class="what">把 devopsd 和数据目录搬到生产服务器；profile 换 team-lite；项目配置从「本地目录」改「GitHub 仓库」（UI 上改一次，或改 projects 表一行）</div><div class="why">为什么不丢数据：devops.db + data/ 直接 scp —— SQLite 单文件数据库的迁移成本就是拷贝文件；构建历史、知识库、已验证三元组全部保留（LOA 演进不断档）</div></div></div><div class="evrow"><div class="arrow">Ⅱ → Ⅲ<small>简易团队 → 完整团队</small></div><div><div class="what">新 VPS 上 scp 二进制 + 数据目录；profile 换 team-full；deploy_hosts 把 127.0.0.1 改成真实目标机地址 + SSH 私钥</div><div class="why">为什么不丢数据：同样是搬文件；webhook URL 在 GitHub 仓库设置里改一次指向新构建机</div></div></div><div class="evrow"><div class="arrow">Ⅰ → Ⅲ<small>个人 → 完整团队</small></div><div><div class="what">两步合一：搬机器 + 换 profile + 配 deploy_hosts</div><div class="why">为什么不丢数据：知识库若希望保留，随 devops.db 一起迁移即可</div></div></div>
+</div>
+<div class="callout"><b>迁移成本 = 拷贝文件。</b>SQLite 单文件数据库 + 单二进制的设计在这里兑现价值：
+形态升级不导出/不重建/不停机迁移，<span class="mono">scp devopsd devops.db data/ 新机器:</span> 即完成。
+构建历史、知识库、已验证三元组（LOA 演进的积累）随库整体带走。</div></section><section id="s7"><h2><span class="n">§7</span>前端影响面</h2><div class="lead">现有 13 页面 / 167 测试的改动清单。</div>
+<table><thead><tr><th>前端资产</th><th>改动量</th><th>说明</th></tr></thead><tbody>
+<tr><td>新建项目向导</td><td><b style="color:var(--orange)">小改</b></td><td>「连接仓库」步骤增加项目类型二选一：GitHub/GitLab URL（Ⅱ/Ⅲ）｜本地目录选择器（Ⅰ，桌面形态弹原生目录框，浏览器形态填路径）</td></tr><tr><td>部署目标管理</td><td><b style="color:var(--orange)">小改</b></td><td>deploy_hosts 增加 kind=local 卡片样式（显示「本机 Docker」，无 SSH 字段）；表单按 kind 切换字段组</td></tr><tr><td>项目列表 / 构建历史 / 详情 / 日志 / 诊断 / 审批 / 知识库 / 审计</td><td><b style="color:var(--green)">零改动</b></td><td>触发源、检出、部署方式对上游页面透明 —— builds.trigger 字段已能区分 push/manual，可增加 local-commit 枚举值</td></tr><tr><td>登录 / 设置 / 状态页</td><td><b style="color:var(--green)">零改动</b></td><td>多用户仅由 profile 决定是否启用；前端按 /api/runner 返回的能力位渲染</td></tr><tr><td>契约</td><td><b style="color:var(--orange)">增量</b></td><td>openapi.yaml：projects 增 deployKind/sourceKind 字段；枚举 trigger 增 local-commit；均为向后兼容的新增，不动现有字段</td></tr>
+</tbody></table>
+<p style="font-size:12.5px;color:var(--tx2)">现有 13 页面 / 167 测试 / openapi 契约全部保值；
+改动集中在向导一处新增项目类型 + 部署目标卡片一种新 kind，均为向后兼容的增量。</p></section><section id="s8"><h2><span class="n">§8</span>实测证据清单</h2><div class="lead">所有「已核实/实测」断言的出处，可复核。</div>
+<table><thead><tr><th>断言</th><th>验证方式</th><th>证据摘要</th></tr></thead><tbody>
+<tr><td>git archive 按任意历史 SHA 导出干净快照（不含 .git）</td><td><span class="ev-ok">本机 git 2.45.1 实测</span></td><td style="color:var(--tx2)">对含两个 commit 的测试仓库，archive 第一个历史 SHA → tar 解出内容与该提交一致，目录无 .git</td></tr><tr><td>git rev-parse HEAD 成本 77ms</td><td><span class="ev-ok">本机实测</span></td><td style="color:var(--tx2)">time git rev-parse HEAD → real 0m0.077s；轮询兜底每 5s 一次的开销可忽略</td></tr><tr><td>.git/HEAD 为可监视的符号引用文件</td><td><span class="ev-ok">本机实测</span></td><td style="color:var(--tx2)">内容为 ref: refs/heads/main，切分支时随之变化 → fsnotify 监视点成立</td></tr><tr><td>GIT_CONFIG_COUNT 环境变量注入 git 配置，不落盘</td><td><span class="ev-ok">本机实测</span></td><td style="color:var(--tx2)">注入值可被 git config --get 读到；.git/config 无痕迹；unset 后回落全局值</td></tr><tr><td>GitHub 支持按任意历史 SHA 浅 fetch</td><td><span class="ev-ok">对 octocat/Hello-World 实测</span></td><td style="color:var(--tx2)">取非分支尖端 SHA 553c207 → 全新客户端 fetch --depth=1 成功 → checkout 后 HEAD 一致</td></tr><tr><td>GitHub webhook 允许纯 HTTP + 裸 IP（无域名/证书）</td><td><span class="ev-ok">GitHub 官方文档核实</span></td><td style="color:var(--tx2)">docs.github.com：URL 非 HTTPS 时不显示 SSL 验证选项（http 为受支持形态）；多处官方示例用 http://localhost</td></tr><tr><td>Docker Desktop 对个人/教育/小企业（&lt;250人且&lt;$10M）免费</td><td><span class="ev-ok">Docker 官方 license 页核实</span></td><td style="color:var(--tx2)">docs.docker.com/subscription/desktop-license</td></tr><tr><td>本机现状：无 docker CLI、无可用 WSL 发行版</td><td><span class="ev-ok">本机实测</span></td><td style="color:var(--tx2)">形态Ⅰ演示前需安装 Docker Desktop 或 podman —— 已列入 M1 前置</td></tr><tr><td>fsnotify 跨平台（Windows ReadDirectoryChangesW / Linux inotify）</td><td><span class="ev-warn">fsnotify 库公开文档（未实测）</span></td><td style="color:var(--tx2)">标注为设计依据而非实测结论；M1 spike 第一项即验证监视 .git/ 的事件可靠性</td></tr>
+</tbody></table>
+<div class="callout warn"><b>诚实边界：</b>标橙色「未实测」的条目是设计依据而非实测结论，M1 的第一项 spike 就是补验；
+本机当前无 docker CLI（已实测确认），形态Ⅰ演示前需先安装容器引擎 —— 已列入前置清单，不隐瞒。</div></section>
+<footer>GoPulse CI · deploy-modes.html · 由 build_deploy_modes.py 生成（内容: dm_content1/2.py · 外壳: dm_shell.py）
+· 零外部依赖 · 打印友好（Ctrl+P 导出 PDF）</footer>
+</main>
+<script>
+// 侧栏高亮（IntersectionObserver，滚动驱动）
+const links=[...document.querySelectorAll('#side a')];
+const secs=links.map(a=>document.querySelector(a.getAttribute('href'))).filter(Boolean);
+const io=new IntersectionObserver(es=>{
+  es.forEach(e=>{ if(e.isIntersecting){
+    links.forEach(a=>a.classList.toggle('on',a.getAttribute('href')==='#'+e.target.id));
+  }});
+},{rootMargin:'-10% 0px -80% 0px'});
+secs.forEach(s=>io.observe(s));
+
+// profile 页签
+document.querySelectorAll('.tabs').forEach(bar=>{
+  bar.addEventListener('click',ev=>{
+    const b=ev.target.closest('button'); if(!b)return;
+    const paneId=b.dataset.pane;
+    bar.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));
+    document.querySelectorAll('.tabpane[data-group="'+bar.dataset.group+'"]')
+      .forEach(p=>p.classList.toggle('on',p.id===paneId));
+  });
+});
+
+// 流水线差异过滤
+const diffOnly=document.getElementById('diffOnly');
+if(diffOnly) diffOnly.addEventListener('change',()=>{
+  document.querySelectorAll('.pipe tr.diffable').forEach(tr=>{
+    tr.style.display=(diffOnly.checked && !tr.classList.contains('diff'))?'none':'';
+  });
+});
+
+// 形态卡「聚焦」：点击 header 高亮并在流水线表中联动过滤该形态列
+const COLS={personal:3,lite:4,full:5};
+document.querySelectorAll('.tcard header').forEach(h=>{
+  h.addEventListener('click',()=>{
+    const id=h.closest('.tcard').dataset.topo;
+    const wasOn=h.closest('.tcard').classList.contains('active');
+    document.querySelectorAll('.tcard').forEach(c=>c.classList.remove('active'));
+    const tbl=document.querySelector('table.pipe');
+    tbl.querySelectorAll('td').forEach(td=>td.style.opacity='');
+    if(!wasOn){
+      h.closest('.tcard').classList.add('active');
+      const col=COLS[id];
+      tbl.querySelectorAll('tr').forEach(tr=>{
+        [...tr.children].forEach((td,i)=>{ if(i>1) td.style.opacity=(i+1===col)?'1':'0.35'; });
+      });
+    }
+  });
+});
+</script>
+</body></html>

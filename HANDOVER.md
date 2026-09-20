@@ -3,18 +3,30 @@
 > **读者**：接手 Go 后端开发的工程师。
 > **目的**：不看其它文档也能开工。本文覆盖：系统全貌、前端已完成的部分、
 > 后端契约（必须遵守）、已知缺陷（动工前先决策）、建议的实施顺序、验收方式。
-> **日期**：2026-09-17 · **前端状态**：已完成并通过全部测试（23 文件 / 167 用例）
+> **日期**：2026-09-19（三形态解耦版） · **前端状态**：已完成并通过全部测试（23 文件 / 167 用例）
 
 ---
 
 ## 1. 项目是什么（30 秒版）
 
-面向小型团队的轻量 CI/CD 工具，毕业设计项目。交付形态是**一个 Go 单二进制
-（`devopsd`）+ 一个 SQLite 文件**，跑在一台 VPS 上完成全流程：
+面向小型团队的轻量 CI/CD 工具，毕业设计项目。交付形态是
+**一个 Go 单二进制（`devopsd`）+ 一个 SQLite 文件**，按 `-profile`（必填）装配出三种部署形态
+（详见 ARCHITECTURE §3.8/§7 与 `visual/deploy-modes.html`）。
+**三形态均为交付物，各有 E2E 验收（TODO M4 出口条件），不做花瓶**：
+
+| 形态 | profile | 触发 | 检出 | 部署 | 你的任务 |
+|------|---------|------|------|------|---------|
+| Ⅰ 个人开发者版 | `personal` | fsnotify 监视本地 `.git/` | `git archive <sha>`（零凭据） | 本机 compose | ✅ 交付（离线 E2E），实现顺序第 1（最简路径） |
+| Ⅱ 简易团队版 | `team-lite` | GitHub webhook | `git fetch <sha>` | 本机 compose（合设） | ✅ 交付（合设 E2E），论文代表场景，实现顺序第 2 |
+| Ⅲ 完整团队版 | `team-full` | webhook | `git fetch <sha>` | SSH 远程 ×N | ✅ 交付（SSH E2E，WSL2 可充当目标机），实现顺序第 3 |
+
+三形态共用同一内核，差异只在三个接口点（`TriggerSource`/`CheckoutStrategy`/`DeployTarget`）。
+实现顺序 Ⅰ→Ⅱ→Ⅲ 是由简入繁（Ⅰ零凭据零网络，adapter 最少），不是优先级——**M4 末三形态必须全部可用**。
+主流程（以形态Ⅰ为例）：
 
 ```
-git push → webhook → 入队 → Docker 容器内构建 → 产物镜像
-        → SSH 部署到目标机（docker-compose）→ 健康检查
+本地 commit → 监视 .git/ 发现新 SHA → 入队 → Docker 容器内构建 → 产物镜像
+        → compose-local 部署（目标=本机）→ 健康检查
         ├─ 通过 → deployed
         └─ 失败 → ★LOA 决策点★
               ├─ 命中已验证知识库且 LOA≥6 → 自动执行(重试/回滚/已验证修复) → 写审计
@@ -32,8 +44,10 @@ git push → webhook → 入队 → Docker 容器内构建 → 产物镜像
 4. LLM 构建失败智能诊断（Go 只做 HTTP 客户端，异步、可失败、不阻塞主流程；
    输出**结构化证据链**而非散文，不输出百分比置信度）
 5. 单机轻量：无 Redis / 无消息队列 / 无 K8s，**不要引入任何外部中间件**
+6. **三形态解耦**：形态差异收敛在 `internal/core/ports.go` 三接口 + `cmd/devopsd` 一个 switch；
+   core 禁 import adapter，adapter 互不 import。新增形态 = 新 adapter + 新 profile，core/前端零改动
 
-范围红线：单构建机、SSH+compose 原地替换部署。**不做**蓝绿/滚动/K8s/多租户。
+范围红线：单构建机、compose 原地替换部署（形态Ⅲ加 SSH 远程）。**不做**蓝绿/滚动/K8s/多租户。
 **全自动模式 ≠ AI 自动写代码补丁并合入**（LOA 8 明确排除，见 ARCHITECTURE §5.5/§5.7）。
 
 ---
@@ -48,7 +62,7 @@ graduation-project-cicd/
 ├── TODO.md              M0–M8 里程碑清单（你的任务 = M1–M7）
 ├── DEPENDENCIES.md      依赖选型及理由（后端部分是你的采购清单）
 ├── diagrams/            6 张论文级 SVG 架构图
-├── visual/              交互式架构演示页（答辩用）
+├── visual/              交互式可视化 ×3：index(答辩演示) · guide(原理讲解) · deploy-modes(三形态对照)
 └── web/                 ★ 前端工程（已完成，勿大改）
     ├── openapi.yaml     ★★ API 契约（OpenAPI 3.1，Redocly 校验通过）
     ├── src/types.ts     ★★ DTO 类型（与你的 Go struct 一一对应）
@@ -69,9 +83,12 @@ graduation-project-cicd/
 
 ### 待做 ⬜（全部是你的）
 
-M1 骨架 → M2 构建执行 → M3 SSE 实时日志 → M4 部署回滚
+M1 骨架（**core/ports 三接口 + LocalWatch/Manual 触发**）→ M2 构建执行（**gitarchive+gitfetch 双检出**）
+→ M3 SSE 实时日志 → M4 部署回滚 + Webhook 触发（**composelocal+sshremote 双部署**）
 → **M5 智能诊断·人主导档 LOA 2/4** → **M6 全自动托管·LOA 6/7** → M7 并发打磨与 A/B 对照实验。
 每个里程碑的验收标准见 `TODO.md`，此处不重复。
+**★ M4 出口条件：三形态 E2E 验收全过**（Ⅰ离线全链路 / Ⅱ合设共存+webhook 幂等 / ⅢWSL2 目标机 SSH 全链路，
+验收表见 TODO M4）——缺一即 M4 不算完成，三形态都是交付物不是演示道具。
 
 **M5/M6 是本课题的核心创新点所在**，不要当成"最后加个 AI 功能"来做 ——
 Analyzer Registry、Action Whitelist、Policy Resolver、Approval Gate、Knowledge Store
@@ -83,17 +100,20 @@ Analyzer Registry、Action Whitelist、Policy Resolver、Approval Gate、Knowled
 
 ### 3.1 进程内模块
 
-单二进制，模块间用 Go interface 解耦（`internal/platform/` 下三个外部依赖
-全部接口化：Docker / SSH / LLM —— 单测打桩，不起真容器）。
+单二进制，模块间用 Go interface 解耦，两层接口：
+- `internal/platform/`：三个**外部依赖**接口化（Docker / SSH / LLM —— 单测打桩，不起真容器）
+- `internal/core/ports.go`：三个**形态解耦点**（TriggerSource / CheckoutStrategy / DeployTarget，
+  ARCHITECTURE §3.8）—— core 禁 import adapter，adapter 互不 import，形态分支只在 main.go 一个 switch
 
 ```
-cmd/devopsd/main.go        装配 + 启动 + 优雅关闭（SIGTERM → drain）
+cmd/devopsd/main.go        ★全系统唯一形态分支点：按 profile 装配 adapters + 启动 + 优雅关闭（SIGTERM → drain）
 internal/
-  config/                  YAML + 环境变量（密钥只存环境变量名，不存值）
-  httpapi/                 chi 路由：webhook / REST / SSE / auth / approvals
+  core/ports.go     ★     TriggerSource / CheckoutStrategy / DeployTarget 三接口 + 共享核心装配
+  config/                  YAML + 环境变量 + profile 预设（personal/team-lite/team-full）
+  httpapi/                 chi 路由：trigger 入口(webhook 仅Ⅱ/Ⅲ装配) / REST / SSE / auth / approvals
   scheduler/               持久化队列（SQLite 行即队列）+ worker pool + 生命周期
   build/                   状态机 / 执行编排 / 项目检测 / pipeline 生成
-  deploy/                  SSH 执行 / 健康检查 / 回滚
+  deploy/                  部署编排 / 健康检查 / 回滚（两种 DeployTarget 走同一步骤时间线）
   logpipe/                 fan-out 广播 + ring buffer + 批量落库
   diagnose/                LLM 客户端 + 裁剪 + 脱敏 + prompt + 证据链解析
   loa/            ★新增★   核心创新点模块（详见 ARCHITECTURE.md §5）
@@ -108,7 +128,15 @@ internal/
   store/                   sqlc 生成查询 + goose 迁移
   crypto/                  AES-GCM（secrets、SSH 私钥、webhook secret、git 凭据）
   platform/{dockerx,sshx,llmx}/   外部依赖接口 + 实现
-  vcs/                     GitHub/GitLab 事件解析 → 统一内部事件；checkout.go 代码检出（§3.7）
+  vcs/                     GitHub/GitLab 事件解析 → 统一内部事件（形态Ⅱ/Ⅲ）
+  adapters/         ★     三接口全部实现，形态差异收敛于此：
+    localwatch/            fsnotify 监视本地 .git/ + 防抖 2s + 轮询兜底 5s（形态Ⅰ触发）
+    webhook/               HMAC 验签 + 事件归一化 + 幂等入队（形态Ⅱ/Ⅲ触发）
+    manual/                UI 手动触发（三形态恒有）
+    gitarchive/            git archive <sha> 本地检出，零凭据（形态Ⅰ）
+    gitfetch/              fetch --depth=1 <sha> + GIT_CONFIG_COUNT 凭据注入（形态Ⅱ/Ⅲ，§3.7）
+    composelocal/          本机 docker compose 部署（形态Ⅰ/Ⅱ）
+    sshremote/             docker save|ssh load + FixedHostKey 远程部署（形态Ⅲ）
 pkg/api/types.go           对外 DTO —— 必须与 web/src/types.ts 对齐
 ```
 
@@ -129,6 +157,8 @@ main
  │         ├── Log Reader     容器 stdout → LogPipe（逐行加时间戳）
  │         ├── Log Writer     批量落库（200 行或 2s flush 一次）
  │         └── Diagnoser      失败时异步调 LLM，独立 goroutine
+ ├── Trigger goroutines ×3   每 TriggerSource 一个（local-watch/webhook/manual，按 profile 装配；
+ │                           local-watch 内含 fsnotify 事件循环 + 5s 轮询兜底）
  ├── HTTP server        ×M   每请求一个（net/http 默认模型）
  │    └── SSE handler        订阅 LogPipe，慢客户端丢弃不阻塞
  ├── Reconciler         ×1   30s 周期：孤儿构建标记 failed(interrupted)、超时清理、旧产物 GC
@@ -167,7 +197,9 @@ diagnosis_state: none → pending → done/failed   （独立字段，异步，�
 | `builds` | `UNIQUE(project_id, number)`；部分索引 `WHERE state IN ('queued','running','deploying')` | number 是项目内序号；调度器只查活跃行 |
 | `builds.pipeline_json` | 每次构建存**执行时快照** | 检测规则以后改了，历史构建仍可复现 |
 | `builds.failure_kind` / `loa_applied` | 新增两列 | 记录本次命中的失败类型与生效的自动化级别（论文实验要按 LOA 分组统计）；`failure_kind` 含 `git_auth`(凭据失效,不可重试) / `transient_network`(可重试) 等 |
-| `projects.git_auth_type` / `git_credential_enc` | AES-GCM 专用列，**独立于 `secrets`** | 代码检出凭据；secrets 语义是「注入容器的 env」，git 凭据只在 `internal/vcs` 解密到内存、用完清零，绝不进容器（§3.7） |
+| `projects.source_kind` / `repo_path` ★ | `local-repo`(形态Ⅰ，用 repo_path) \| `github`/`gitlab`(形态Ⅱ/Ⅲ，用 repo_provider+repo_full_name) | 触发与检出策略的选择依据（§3.8）；local-repo 零凭据，git_auth_* 列为 NULL |
+| `deploy_hosts.kind` ★ | `local`(形态Ⅰ/Ⅱ，addr=127.0.0.1，ssh_* 列 NULL) \| `ssh`(形态Ⅲ) | 部署走 composelocal 还是 sshremote 的判据 |
+| `projects.git_auth_type` / `git_credential_enc` | AES-GCM 专用列，**独立于 `secrets`** | 代码检出凭据（仅形态Ⅱ/Ⅲ用）；secrets 语义是「注入容器的 env」，git 凭据只在 `internal/vcs` 解密到内存、用完清零，绝不进容器（§3.7） |
 | `builds.diagnosis` | 由纯文本改为 **JSON** | 承载证据链结构（claim / logLines / verbatim / diffHunk） |
 | `build_events` | append-only | 状态机审计 |
 | `deployments.previous_deployment_id` | 自引用外键 | 回滚链显式建模，不靠时间戳猜 |
@@ -190,14 +222,28 @@ RETURNING ...;
 
 ### 3.5 关键流程的正确性要点
 
-**Webhook（最容易被做错的地方）**
+**触发（三形态，最容易被做错的地方）**
+
+*形态Ⅰ LocalWatch（实现顺序第 1，最简）*：
+- 只监视 `.git/HEAD` 与 `.git/refs/heads/*`，**绝不监视工作区文件**（否则每次保存都触发）
+- fsnotify 事件防抖 2s（rebase/merge 连发 refs 更新 → 取最终 SHA 触发一次）；5s 轮询 `git rev-parse HEAD` 兜底（实测 77ms/次）
+- 不写 `.git/hooks/`（不侵入用户仓库）；fsnotify 跨平台性为**设计依据未实测**，M1 spike 首项验证
+- 合盖/关机错过的 commit 由唤醒后轮询补触发；监视器与轮询结果按 (repo,sha,ref) 幂等去重
+
+*形态Ⅱ/Ⅲ Webhook*：
 - 验签：GitHub `X-Hub-Signature-256: sha256=<hex>`（HMAC-SHA256，每项目独立 secret）；GitLab `X-Gitlab-Token` 明文比对
 - 请求体 `io.LimitReader` 1MB，超限 413
 - **验签通过 → 解析 → 入队 → 立即 202**。绝不同步构建（平台 10s 超时 → 重试风暴）
-- 幂等：同 `repo+sha+ref` 短窗口去重（内存 LRU 即可），命中返回 202 + `deduplicated:true`
+- 幂等：同 `repo+sha+ref` 短窗口去重（内存 LRU 即可），命中返回 202 + `deduplicated:true`（与形态Ⅰ共用同一去重表）
 - 队列满返回 503（背压，平台会重试）—— 这是设计行为不是错误
+- HTTP + 裸 IP 即可（无需域名/证书，GitHub 官方支持，已核实）
 
-**代码检出（M2 前置，安全最易错，详见 ARCHITECTURE §3.7）**
+**代码检出（M2 前置，两种策略，详见 ARCHITECTURE §3.7）**
+
+*形态Ⅰ gitarchive（实现顺序第 1，最简）*：`git -C <repo> archive --format=tar <sha> | tar -x -C <workdir>`
+—— 零凭据零网络，产物不含 `.git`（已实测）；SHA 不可达 → `failed`，不静默用 HEAD
+
+*形态Ⅱ/Ⅲ gitfetch（安全最易错）*：
 - **检出在 Go 侧做，不在构建容器里 clone**：凭据若以 env 传进容器，构建脚本 `env`/`set` 即可读到 → 泄漏面大，违反「secret 白名单注入」基调
 - 检出到 `data/workspaces/<build_id>/`，再**只读挂载**进构建容器；容器内无任何 git 凭据
 - **凭据存 `projects.git_credential_enc`（AES-GCM），绝不进 `secrets` 表** —— secrets 的语义是「注入容器的 env」，git 凭据走独立取用路径，只在 `internal/vcs` 解密到内存、用完 `defer` 清零
@@ -213,9 +259,17 @@ RETURNING ...;
 - 代码目录**只读**挂载进容器（见上「代码检出」）；容器不挂 Docker socket（防逃逸）；secret 按项目白名单注入 env
 - 日志从 `ContainerLogs` 流式读，逐行推进 LogPipe
 
-**部署**
+**部署（两种 DeployTarget，同一步骤时间线）**
+
+*形态Ⅰ/Ⅱ composelocal（实现顺序第 1）*：目标=本机，`deploy_hosts.kind=local` 跳过 SSH，直接 `docker compose up -d`
+（镜像已在本机 daemon，零传输）。形态Ⅱ合设时叠加三道闸：`max_concurrency=1` + 容器 `--cpus/--memory` 限额 + 构建前磁盘水位检查
+
+*形态Ⅲ sshremote*：
+- 镜像传输 `docker save <tag> | ssh <host> docker load`（流式，**无需私有 registry**）
 - SSH `HostKeyCallback` 必须校验（`ssh.FixedHostKey` 或 known_hosts），这是论文安全章节的论点，不能省
 - 部署前环境预检：docker / docker-compose 存在性（`/hosts/{id}/test` 同款逻辑）
+
+*两种共用*：
 - 健康检查：GET healthCheckUrl × N 次（间隔 3s），全过才 `deployed`
 - 失败且 `auto_rollback=1`：取 `previous_deployment_id` 的 image_tag 重新部署 → `rolled_back`
 - 版本保留：目标机保留最近 K 个镜像 tag，超出清理
@@ -354,22 +408,28 @@ a3f9c21、28140ms、build-runner-01……）。**联调时让后端返回与 moc
 
 ```
 第 1 步（骨架竖切）：
+  core/ports.go 三接口 + main.go profile 装配 switch（形态解耦地基，第一天定死）
   POST /projects（写库）→ GET /projects（读库）→ 前端关掉 mock 能看到项目列表
-  含：config、goose 迁移、chi 路由、slog、sqlc 跑通
+  含：config（三份 profile 预设）、goose 迁移、chi 路由、slog、sqlc 跑通
+  + Spike：fsnotify 监视 .git/ 事件可靠性（Windows）；失败则轮询兜底升主通道
 
-第 2 步（假构建闭环）：
-  POST /projects/{id}/builds → 写 queued 行 → 极简 worker（sleep 5s）→ succeeded
+第 2 步（假构建闭环，形态Ⅰ触发链路）：
+  ManualTrigger + LocalWatchTrigger（防抖/幂等）→ 写 queued 行 → 极简 worker（sleep 5s）→ succeeded
   GET /builds/{n} /stages /logs 返回假数据 → 前端构建历史页活了
+  演示物：本地仓库 git commit → 界面出现新构建（全程无网络）
 
 第 3 步（真构建）：
-  worker 换成 Docker 执行 + detect.go 项目检测 + LogPipe 落库
+  gitarchive 检出（形态Ⅰ）+ worker 换成 Docker 执行 + detect.go 项目检测 + LogPipe 落库
   先用 os/exec 封 docker CLI，跑通后再换 SDK（降风险）
+  gitfetch 检出（形态Ⅱ/Ⅲ，凭据注入按 §3.5）可稍后补
 
 第 4 步（SSE）：
   /logs/stream + ring buffer + Last-Event-ID → 前端实时日志滚动
 
-第 5 步（部署回滚）：
-  sshx + compose up -d + 健康检查 + 自动回滚 + /hosts /deployments
+第 5 步（部署回滚 + 形态Ⅱ/Ⅲ触发链路）：
+  composelocal 部署（形态Ⅰ/Ⅱ）→ 健康检查 → 自动回滚 → /hosts /deployments
+  WebhookTrigger（验签/幂等/202）→ 形态Ⅱ可用
+  sshremote（save|ssh load + FixedHostKey）→ 形态Ⅲ可用
 
 第 6 步（LLM 诊断 + LOA 人主导档）：★ 核心创新点前半 ★
   6a. Analyzer Registry + Action Whitelist + Policy Resolver（先不做 LLM，纯规则也能跑）
@@ -398,9 +458,10 @@ a3f9c21、28140ms、build-runner-01……）。**联调时让后端返回与 moc
 ### 开发环境要求
 
 - Go 1.22+（`CGO_ENABLED=0` 必须可编译 —— modernc sqlite 是纯 Go，别换 mattn 驱动）
-- Docker Desktop（构建执行用）
-- Node 20+（跑前端联调；本机已装 v24）
-- 目标机：任意装了 docker + docker-compose 的 Linux（WSL2 发行版即可充当）
+- 容器引擎：Docker Desktop（个人/教育免费）或 podman；**当前开发机两者都未装**（已实测确认），
+  M2 前置安装。形态Ⅰ构建与部署目标都是本机容器引擎
+- Node 20+（跑前端联调；本机已装 v22）
+- 形态Ⅲ目标机：任意装了 docker + docker-compose 的 Linux（WSL2 发行版即可充当）
 
 ### 后端验收清单（对照 TODO.md M1–M7）
 
@@ -411,31 +472,36 @@ go build -o devopsd ./cmd/devopsd       # 单二进制
 ```
 
 功能验收（前端联调，`VITE_USE_MOCK=false`）：
-1. 创建项目 → webhook 配置页给出 URL+secret → GitHub 实仓 push 触发
-2. 构建实时日志滚动 → 成功后自动部署 → 打开目标机 URL 见新版本
-3. 提交语法错误 → 构建失败 → AI 诊断卡出现真实建议，**且证据链里的日志行号可点击跳转到对应行**
-4. 部署后杀掉应用进程 → 健康检查失败 → 自动回滚 → 旧版本恢复
-5. 同时触发 5 个构建 → 并发 ≤ N，其余排队，无死锁无泄漏
-6. `kill -TERM devopsd` → 在跑的构建完成或被标记，重启后孤儿恢复
+1. **三形态 E2E 验收全过（★M4 出口条件，验收表见 TODO M4）**：
+   Ⅰ 断网全链路（commit→构建→部署→回滚）· Ⅱ 合设共存（curl 模拟 webhook + P95 劣化<20% + 幂等重放）
+   · Ⅲ WSL2 目标机 SSH 全链路（含 FixedHostKey 拒绝伪造主机）
+   任一形态验收不过 = M4 未完成 —— 三形态都是交付物，不是演示道具
+2a. 创建「本地目录」项目 → `git commit` → 界面 2s 内出现新构建（防抖后）；同一 commit 不重复触发
+2b. 创建 GitHub 项目 → webhook 配置页给出 URL+secret → 实仓 push 触发（或 curl 模拟验签）
+3. 构建实时日志滚动 → 成功后自动部署 → 打开目标 URL 见新版本（形态Ⅰ/Ⅱ 为 localhost）
+4. 提交语法错误 → 构建失败 → AI 诊断卡出现真实建议，**且证据链里的日志行号可点击跳转到对应行**
+5. 部署后杀掉应用进程 → 健康检查失败 → 自动回滚 → 旧版本恢复
+6. 同时触发 5 个构建 → 并发 ≤ N，其余排队，无死锁无泄漏
+7. `kill -TERM devopsd` → 在跑的构建完成或被标记，重启后孤儿恢复
 
 **LOA 引擎专项验收（M5/M6，创新点的验收）：**
 
-7. **受约束上下文**：构造一个 secrets 里有值的构建失败 → 检查发往 LLM 的 payload，
+8. **受约束上下文**：构造一个 secrets 里有值的构建失败 → 检查发往 LLM 的 payload，
    确认敏感值已被替换，且 `forbidden` 声明的上下文（其他项目日志、SSH 私钥）根本没被读取
    （建议在此处加断言测试，而不只是人工看日志）
-8. **动作白名单**：让 LLM 返回一个未注册的动作名 → 引擎必须拒绝执行并记录审计，不得崩溃
-9. **审批关口**：默认策略（LOA 4）下触发失败 → 动作进入 `approvals` 且**不执行** →
+9. **动作白名单**：让 LLM 返回一个未注册的动作名 → 引擎必须拒绝执行并记录审计，不得崩溃
+10. **审批关口**：默认策略（LOA 4）下触发失败 → 动作进入 `approvals` 且**不执行** →
    前端批准后执行 → 驳回则记录负反馈且不执行
-10. **破坏性动作不可提权**：把策略配成 LOA 7 后触发一个 `destructive` 动作 →
+11. **破坏性动作不可提权**：把策略配成 LOA 7 后触发一个 `destructive` 动作 →
     仍必须停在审批队列（策略不能覆盖硬约束）
-11. **知识沉淀与演进**：同一类失败连续人工标记 ✅ 三次 →
+12. **知识沉淀与演进**：同一类失败连续人工标记 ✅ 三次 →
     `knowledge.verified_count` 达阈值 → 第四次同类失败**不调 LLM**、自动执行、写审计
-12. **熔断降级**：连续两次自动修复失败 → LOA 降回 4 + 产生通知 + `automation_audit` 记录
+13. **熔断降级**：连续两次自动修复失败 → LOA 降回 4 + 产生通知 + `automation_audit` 记录
     `outcome='circuit_broken'` 与 `loa_before/loa_after`
-13. **预算限制**：把每日自动修复上限设为 1 → 第二次触发时不再自动执行，转为通知
-14. **诊断失败不影响主干**：把 LLM base_url 指向不通的地址 → 构建状态照常流转为 `failed`，
+14. **预算限制**：把每日自动修复上限设为 1 → 第二次触发时不再自动执行，转为通知
+15. **诊断失败不影响主干**：把 LLM base_url 指向不通的地址 → 构建状态照常流转为 `failed`，
     `diagnosis_state='failed'`，流水线不阻塞
-15. **审计可回放**：任取一次自动执行记录，能从 `automation_audit` 还原出
+16. **审计可回放**：任取一次自动执行记录，能从 `automation_audit` 还原出
     触发规则、前后状态、耗时（论文里"全自动可审计"的兑现）
 
 ### 前端回归（改契约后必跑）
@@ -468,8 +534,10 @@ oapi-codegen -package api -generate types,chi openapi.yaml > pkg/api/generated.g
 # 注意：生成物只做参考底稿，DTO 手写在 pkg/api/types.go 更可控
 
 # 架构图 / 演示
-start diagrams/index.html    # 6 张论文图
-start visual/index.html      # 交互演示（含失败诊断动画）
+start diagrams/index.html        # 6 张论文图
+start visual/index.html          # 交互演示（含失败诊断动画）
+start visual/guide.html          # 全流程原理讲解（15 站，小白友好）
+start visual/deploy-modes.html   # ★三形态架构对照（接口层/profile/实测证据）
 ```
 
 ---
